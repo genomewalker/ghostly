@@ -157,7 +157,7 @@ case "connect":
     IPCClient.notifyConnect(host: host, session: sessionName)
     vlog("IPC done. Starting SSH...")
     let sshVerbose = verbose ? "-v" : ""
-    let sshCmd = "ssh -t \(sshVerbose) \(host) -- ~/.local/bin/ghostly-session open \(sessionName)"
+    let sshCmd = "ssh -t \(sshVerbose) \(host) '~/.local/bin/ghostly-session open \(sessionName)'"
     vlog("Command: \(sshCmd)")
     let status = shell(sshCmd)
     IPCClient.notifyDisconnect(host: host)
@@ -176,7 +176,7 @@ case "attach":
     IPCClient.notifyConnect(host: host, session: session)
     vlog("IPC done. Starting SSH...")
     let sshVerbose = verbose ? "-v" : ""
-    let sshCmd = "ssh -t \(sshVerbose) \(host) -- ~/.local/bin/ghostly-session open \(session)"
+    let sshCmd = "ssh -t \(sshVerbose) \(host) '~/.local/bin/ghostly-session open \(session)'"
     vlog("Command: \(sshCmd)")
     let status = shell(sshCmd)
     IPCClient.notifyDisconnect(host: host)
@@ -214,7 +214,7 @@ case "sessions":
         // Single host
         let host = args[2]
         print("Sessions on \(host):")
-        let status = shell("ssh \(host) -- ~/.local/bin/ghostly-session list 2>/dev/null || echo 'ghostly-session not installed'")
+        let status = shell("ssh \(host) '~/.local/bin/ghostly-session list 2>/dev/null || echo ghostly-session not installed'")
         exit(status)
     } else {
         // All managed hosts — check each SSH host for sessions
@@ -226,7 +226,7 @@ case "sessions":
         print("Scanning \(hosts.count) hosts for active sessions...\n")
         var foundAny = false
         for (alias, _) in hosts {
-            if let output = shellOutput("ssh -o ConnectTimeout=5 -o BatchMode=yes \(alias) -- ~/.local/bin/ghostly-session list 2>/dev/null") {
+            if let output = shellOutput("ssh -o ConnectTimeout=5 -o BatchMode=yes \(alias) '~/.local/bin/ghostly-session list' 2>/dev/null") {
                 let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty && !trimmed.contains("not installed") {
                     print("\(alias):")
@@ -271,7 +271,7 @@ case "setup":
     print("Installing ghostly-session on \(host)...")
 
     // Check if already installed
-    if let _ = shellOutput("ssh \(host) -- test -x ~/.local/bin/ghostly-session 2>/dev/null && echo found") {
+    if let _ = shellOutput("ssh \(host) 'test -x ~/.local/bin/ghostly-session && echo found' 2>/dev/null") {
         print("ghostly-session is already installed on \(host)")
         exit(0)
     }

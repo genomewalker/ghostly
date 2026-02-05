@@ -201,14 +201,14 @@ actor SessionService {
         }
     }
 
-    /// Explicit path — no shell quoting needed, SSH passes args to remote shell directly
+    /// Explicit path in single quotes — prevents local ~ expansion, remote shell expands it
     func ghostlyConnectCommand(host: String, sessionName: String = "default") -> String {
-        "ssh -t \(host) -- ~/.local/bin/ghostly-session open \(sessionName)"
+        "ssh -t \(host) '~/.local/bin/ghostly-session open \(sessionName)'"
     }
 
     func ghostlyReattachCommand(host: String, sessionName: String) -> String {
         // Use 'open' instead of 'attach' — open creates-or-attaches, more resilient if session disappeared
-        "ssh -t \(host) -- ~/.local/bin/ghostly-session open \(sessionName)"
+        "ssh -t \(host) '~/.local/bin/ghostly-session open \(sessionName)'"
     }
 
     /// Kill a ghostly session
