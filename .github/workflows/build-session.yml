@@ -1,0 +1,54 @@
+name: Build ghostly-session
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ghostly-session/**'
+      - '.github/workflows/build-session.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'ghostly-session/**'
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        compiler: [g++, clang++]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build with ${{ matrix.compiler }}
+        run: |
+          cd ghostly-session
+          make CXX=${{ matrix.compiler }}
+
+      - name: Verify binary
+        run: |
+          ./ghostly-session/ghostly-session version
+
+  build-macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: |
+          cd ghostly-session
+          make
+
+      - name: Verify binary
+        run: |
+          ./ghostly-session/ghostly-session version
+
+  install-script:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test install.sh
+        run: |
+          bash install.sh
+          ~/.local/bin/ghostly-session version

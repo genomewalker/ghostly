@@ -1,0 +1,23 @@
+# Xcode
+Ghostly/Ghostly.xcodeproj/project.xcworkspace/
+Ghostly/Ghostly.xcodeproj/xcuserdata/
+DerivedData/
+*.xcuserstate
+
+# Build artifacts
+ghostly-session/ghostly-session
+*.o
+*.dSYM/
+
+# macOS
+.DS_Store
+*.swp
+*~
+
+# Python
+__pycache__/
+*.pyc
+
+# IDE
+.idea/
+.vscode/
