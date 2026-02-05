@@ -2,6 +2,17 @@ import AppKit
 import Foundation
 import os
 
+enum TerminalError: LocalizedError {
+    case binaryNotFound(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .binaryNotFound(let host):
+            return "ghostly-session not found on \(host). Run setup first."
+        }
+    }
+}
+
 actor GhosttyService {
     private var ghosttyPath: String?
     private let sessionService = SessionService()
@@ -71,6 +82,12 @@ actor GhosttyService {
         } else {
             actualBackend = await sessionService.ensureGhostlySession(on: host)
         }
+
+        // Preflight: verify binary exists for ghostly backend
+        if actualBackend == .ghostly {
+            try await preflightCheck(host: host)
+        }
+
         let sshCommand = await sessionService.connectCommand(
             host: host,
             sessionName: sessionName,
@@ -81,6 +98,11 @@ actor GhosttyService {
     }
 
     func reattach(host: String, sessionName: String, backend: SessionBackend = .ghostly, openMode: TerminalOpenMode? = nil) async throws {
+        // Preflight: verify binary exists for ghostly backend
+        if backend == .ghostly {
+            try await preflightCheck(host: host)
+        }
+
         let sshCommand = await sessionService.reattachCommand(
             host: host,
             sessionName: sessionName,
@@ -95,7 +117,27 @@ actor GhosttyService {
         try await openTerminal(command: "ssh \(host)", mode: mode)
     }
 
-    // MARK: - Mode Resolution
+    // MARK: - Preflight & Mode Resolution
+
+    /// Verify ghostly-session binary exists on remote before opening a terminal
+    private func preflightCheck(host: String) async throws {
+        do {
+            let result = try await ShellCommand.ssh(
+                host: host,
+                command: "test -x ~/.local/bin/ghostly-session",
+                timeout: 10
+            )
+            if !result.succeeded {
+                await AppLog.shared.log("Preflight: ghostly-session not found on \(host)", level: .error)
+                throw TerminalError.binaryNotFound(host)
+            }
+        } catch let error as TerminalError {
+            throw error
+        } catch {
+            // SSH connection failed — let the terminal command show the error
+            await AppLog.shared.log("Preflight SSH failed for \(host): \(error)", level: .warning)
+        }
+    }
 
     private func resolvedDefaultMode() -> TerminalOpenMode {
         TerminalOpenMode(
@@ -122,53 +164,56 @@ actor GhosttyService {
     // MARK: - Ghostty
 
     private func openInGhostty(command: String, mode: TerminalOpenMode) async throws {
-        let escaped = command.replacingOccurrences(of: "\"", with: "\\\"")
-
-        // If Ghostty is not running, always use new window
-        let isRunning = isAppRunning("com.mitchellh.ghostty")
-
-        if !isRunning || mode == .newWindow {
-            guard let ghostty = await detectGhostty() else {
-                // Fall back to Terminal.app
-                try await openInTerminalApp(command: command, mode: mode)
-                return
-            }
-            _ = try await ShellCommand.run("\(ghostty) -e \"\(escaped)\" &", timeout: 5)
+        guard let ghosttyBin = await detectGhostty() else {
+            try await openInTerminalApp(command: command, mode: mode)
             return
         }
 
-        // Ghostty is running — use System Events for tab/split
         switch mode {
         case .newWindow:
-            break // handled above
-        case .newTab:
+            // Launch ghostty directly with -e — no System Events needed
+            try launchGhosttyProcess(ghosttyBin: ghosttyBin, command: command)
+
+        case .newTab, .splitPane:
+            // Tabs and splits require System Events keystrokes
+            let isRunning = isAppRunning("com.mitchellh.ghostty")
+            if !isRunning {
+                _ = try await ShellCommand.run("open -a Ghostty", timeout: 10)
+                try await Task.sleep(nanoseconds: 1_500_000_000)
+            }
+
+            let escaped = command.replacingOccurrences(of: "\"", with: "\\\"")
+            let modeKeystroke = mode == .newTab
+                ? "keystroke \"t\" using command down"
+                : "keystroke \"d\" using command down"
+
             let script = """
             tell application "Ghostty" to activate
-            delay 0.2
+            delay 0.3
             tell application "System Events"
                 tell process "Ghostty"
-                    keystroke "t" using command down
-                    delay 0.3
-                    keystroke "\(escaped)" & return
-                end tell
-            end tell
-            """
-            try await runAppleScript(script)
-        case .splitPane:
-            // Ghostty uses Cmd+D for vertical split (or Cmd+Shift+D for horizontal)
-            let script = """
-            tell application "Ghostty" to activate
-            delay 0.2
-            tell application "System Events"
-                tell process "Ghostty"
-                    keystroke "d" using command down
-                    delay 0.3
-                    keystroke "\(escaped)" & return
+                    \(modeKeystroke)
+                    delay 0.5
+                    keystroke "\(escaped)"
+                    keystroke return
                 end tell
             end tell
             """
             try await runAppleScript(script)
         }
+    }
+
+    /// Launch ghostty with -e flag — command is a flat SSH invocation, no nested quoting
+    private func launchGhosttyProcess(ghosttyBin: String, command: String) throws {
+        // Single bash -c layer for error visibility (keeps window open on failure)
+        let wrappedCommand = "\(command); ret=$?; if [ $ret -ne 0 ]; then echo ''; echo \"[Exit code: $ret] Press Enter to close.\"; read; fi"
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: ghosttyBin)
+        process.arguments = ["-e", "/bin/bash", "-c", wrappedCommand]
+        // Don't suppress output — let ghostty manage its own terminal
+        try process.run()
+        // Don't wait — ghostty runs independently
     }
 
     // MARK: - iTerm2
@@ -258,8 +303,21 @@ actor GhosttyService {
     // MARK: - Helpers
 
     private func runAppleScript(_ source: String) async throws {
-        let escaped = source.replacingOccurrences(of: "'", with: "'\\''")
-        _ = try await ShellCommand.run("osascript -e '\(escaped)'", timeout: 10)
+        let src = source
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            DispatchQueue.main.async {
+                var errorInfo: NSDictionary?
+                let script = NSAppleScript(source: src)
+                script?.executeAndReturnError(&errorInfo)
+                if let errorInfo = errorInfo,
+                   let msg = errorInfo[NSAppleScript.errorMessage] as? String {
+                    AppLog.shared.log("AppleScript error: \(msg)", level: .error)
+                    continuation.resume(throwing: NSError(domain: "AppleScript", code: -1, userInfo: [NSLocalizedDescriptionKey: msg]))
+                } else {
+                    continuation.resume()
+                }
+            }
+        }
     }
 
     private func isAppRunning(_ bundleID: String) -> Bool {

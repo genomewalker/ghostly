@@ -1,6 +1,6 @@
 # ghostly-session
 
-Remote session manager for [Ghostly](../Ghostly/) -- a single-file C++ binary that replaces tmux/screen/abduco with a custom, zero-dependency session daemon + system info agent.
+Remote session manager for [Ghostly](../Ghostly/) -- a single-file C++ binary that replaces tmux/screen with a custom, zero-dependency session daemon + system info agent.
 
 ## Architecture
 
@@ -131,12 +131,12 @@ This works on any Linux/macOS system with a C++ compiler -- including old HPC cl
 
 ## Comparison
 
-| Feature | ghostly-session | abduco | tmux | screen |
-|---------|:-:|:-:|:-:|:-:|
-| Multi-attach | Yes (16) | No | Yes | Yes |
-| JSON API | Yes | No | No | No |
-| System info | Yes | No | No | No |
-| Zero dependencies | Yes | Yes | No | No |
-| Auto-install | Yes | No | No | No |
-| Single binary | Yes | Yes | No | No |
-| Detach key | Ctrl+\ | Ctrl+\ | Ctrl+b d | Ctrl+a d |
+| Feature | ghostly-session | tmux | screen |
+|---------|:-:|:-:|:-:|
+| Multi-attach | Yes (16) | Yes | Yes |
+| JSON API | Yes | No | No |
+| System info | Yes | No | No |
+| Zero dependencies | Yes | No | No |
+| Auto-install | Yes | No | No |
+| Single binary | Yes | No | No |
+| Detach key | Ctrl+\ | Ctrl+b d | Ctrl+a d |

@@ -45,7 +45,7 @@ actor SessionService {
         do {
             let result = try await ShellCommand.ssh(
                 host: host,
-                command: "command -v ghostly-session >/dev/null 2>&1 && echo ghostly || (command -v tmux >/dev/null 2>&1 && echo tmux || (command -v screen >/dev/null 2>&1 && echo screen || echo none))"
+                command: "bash -l -c 'command -v ghostly-session >/dev/null 2>&1 && echo ghostly || (command -v tmux >/dev/null 2>&1 && echo tmux || (command -v screen >/dev/null 2>&1 && echo screen || echo none))'"
             )
             if result.output.contains("ghostly") { return .ghostly }
             if result.output.contains("tmux") { return .tmux }
@@ -167,7 +167,7 @@ actor SessionService {
         do {
             let result = try await ShellCommand.ssh(
                 host: host,
-                command: "ghostly-session list --json 2>/dev/null || ~/.local/bin/ghostly-session list --json 2>/dev/null || echo '{\"sessions\":[]}'"
+                command: "bash -l -c 'ghostly-session list --json' 2>/dev/null"
             )
             guard result.succeeded else { return [] }
             return parseGhostlySessions(result.output, hostAlias: host)
@@ -201,12 +201,22 @@ actor SessionService {
         }
     }
 
+    /// Explicit path — no shell quoting needed, SSH passes args to remote shell directly
     func ghostlyConnectCommand(host: String, sessionName: String = "default") -> String {
-        "ssh -t \(host) 'ghostly-session open \(sessionName)'"
+        "ssh -t \(host) -- ~/.local/bin/ghostly-session open \(sessionName)"
     }
 
     func ghostlyReattachCommand(host: String, sessionName: String) -> String {
-        "ssh -t \(host) 'ghostly-session attach \(sessionName)'"
+        // Use 'open' instead of 'attach' — open creates-or-attaches, more resilient if session disappeared
+        "ssh -t \(host) -- ~/.local/bin/ghostly-session open \(sessionName)"
+    }
+
+    /// Kill a ghostly session
+    func killGhostlySession(on host: String, sessionName: String) async throws {
+        _ = try await ShellCommand.ssh(
+            host: host,
+            command: "~/.local/bin/ghostly-session kill \(sessionName) 2>/dev/null"
+        )
     }
 
     // MARK: - tmux

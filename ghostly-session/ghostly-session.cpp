@@ -44,7 +44,7 @@
 // For getloadavg
 #include <cstdlib>
 
-#define GHOSTLY_VERSION "1.0.1"
+#define GHOSTLY_VERSION "1.1.0"
 
 // ============================================================================
 // 2. Constants, types, protocol definitions
@@ -65,6 +65,8 @@ enum MsgType : uint8_t {
 static const int MAX_CLIENTS = 16;
 // Buffer sizes
 static const int BUF_SIZE = 8192;
+// Scrollback buffer: replayed to new clients on attach
+static const int SCROLLBACK_SIZE = 128 * 1024; // 128KB
 // Max session name length
 static const int MAX_NAME_LEN = 64;
 // Socket read timeout for client connections (seconds)
@@ -309,6 +311,41 @@ static void atexit_restore() {
 // 6. Server: PTY, daemon fork, poll() event loop, multi-client broadcast
 // ============================================================================
 
+// Scrollback ring buffer: stores recent PTY output for replay on reattach
+struct ScrollbackBuffer {
+    uint8_t data[SCROLLBACK_SIZE];
+    int head;   // next write position
+    int count;  // bytes stored (up to SCROLLBACK_SIZE)
+
+    void reset() { head = 0; count = 0; }
+
+    void append(const uint8_t *buf, int len) {
+        for (int i = 0; i < len; i++) {
+            data[head] = buf[i];
+            head = (head + 1) % SCROLLBACK_SIZE;
+            if (count < SCROLLBACK_SIZE) count++;
+        }
+    }
+
+    // Replay stored data to a single client fd via MSG_DATA
+    bool replay_to(int fd) const {
+        if (count == 0) return true;
+        int start = (head - count + SCROLLBACK_SIZE) % SCROLLBACK_SIZE;
+        int remaining = count;
+        while (remaining > 0) {
+            int chunk = remaining;
+            // Don't wrap around the buffer boundary
+            if (start + chunk > SCROLLBACK_SIZE)
+                chunk = SCROLLBACK_SIZE - start;
+            if (!send_msg(fd, MSG_DATA, data + start, (uint32_t)chunk))
+                return false;
+            start = (start + chunk) % SCROLLBACK_SIZE;
+            remaining -= chunk;
+        }
+        return true;
+    }
+};
+
 struct ServerState {
     std::string name;
     std::string command;
@@ -320,6 +357,7 @@ struct ServerState {
     time_t created;
     int child_exit_code; // [FIX #7] saved when child is first reaped
     volatile bool running;
+    ScrollbackBuffer *scrollback;
 };
 
 static ServerState *g_server = NULL;
@@ -432,6 +470,10 @@ static int run_server(const std::string &name, const std::string &cmd) {
         return 1;
     }
 
+    // Heap-allocate scrollback (128KB) to avoid stack overflow
+    ScrollbackBuffer *scrollback = new ScrollbackBuffer();
+    scrollback->reset();
+
     ServerState srv;
     srv.name = name;
     srv.command = cmd.empty() ? "bash" : cmd;
@@ -442,6 +484,7 @@ static int run_server(const std::string &name, const std::string &cmd) {
     srv.created = time(NULL);
     srv.child_exit_code = 0;
     srv.running = true;
+    srv.scrollback = scrollback;
     g_server = &srv;
 
     write_pid_file(pid_path(name), getpid());
@@ -508,6 +551,9 @@ static int run_server(const std::string &name, const std::string &cmd) {
                     }
 
                     if (hello_ok) {
+                        // Replay scrollback history to new client
+                        srv.scrollback->replay_to(cfd);
+
                         // Set operational recv timeout [FIX #5]
                         set_recv_timeout(cfd, CLIENT_RECV_TIMEOUT);
 
@@ -522,11 +568,12 @@ static int run_server(const std::string &name, const std::string &cmd) {
             }
         }
 
-        // PTY output → broadcast to all clients
+        // PTY output → store in scrollback + broadcast to all clients
         if (fds[1].revents & POLLIN) {
             uint8_t buf[BUF_SIZE];
             ssize_t n = read(pty_master, buf, sizeof(buf));
             if (n > 0) {
+                srv.scrollback->append(buf, (int)n);
                 server_broadcast(srv, MSG_DATA, buf, (uint32_t)n);
             } else if (n == 0 || (n < 0 && errno != EAGAIN && errno != EINTR)) {
                 srv.running = false;
@@ -609,6 +656,8 @@ static int run_server(const std::string &name, const std::string &cmd) {
         close(srv.client_fds[i]);
     close(listen_fd);
     close(pty_master);
+    delete srv.scrollback;
+    srv.scrollback = NULL;
     cleanup_session_files(name);
     g_server = NULL;
 

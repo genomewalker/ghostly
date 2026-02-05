@@ -22,6 +22,12 @@ struct GhostlySession: Identifiable, Hashable {
         backend.displayName
     }
 
+    /// Short duration label like "2h" or "15m" for inline display
+    var durationLabel: String? {
+        guard let created = createdAt else { return nil }
+        return Self.formatDuration(Date().timeIntervalSince(created))
+    }
+
     private static func formatDuration(_ interval: TimeInterval) -> String {
         let minutes = Int(interval) / 60
         let hours = minutes / 60

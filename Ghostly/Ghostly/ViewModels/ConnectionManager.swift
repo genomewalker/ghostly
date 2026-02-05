@@ -154,9 +154,7 @@ final class ConnectionManager {
 
             // Fetch sessions and info concurrently
             async let sessionsResult = sessionService.listSessions(on: host.sshTarget)
-            async let infoResult = host.showRemoteInfo
-                ? remoteInfoService.fetchInfo(host: host.sshTarget)
-                : nil
+            async let infoResult = remoteInfoService.fetchInfo(host: host.sshTarget)
 
             sessions[host.id] = await sessionsResult
             if let info = await infoResult {
@@ -201,6 +199,28 @@ final class ConnectionManager {
         } catch {
             lastError[host.id] = error.localizedDescription
             AppLog.shared.log("Reattach \(host.alias)/\(session.name) failed: \(error.localizedDescription)", level: .error)
+        }
+    }
+
+    func killSession(host: SSHHost, session: GhostlySession) async {
+        AppLog.shared.log("Killing session \(host.alias)/\(session.name)")
+        do {
+            switch session.backend {
+            case .ghostly:
+                try await sessionService.killGhostlySession(on: host.sshTarget, sessionName: session.name)
+            case .tmux:
+                _ = try await ShellCommand.ssh(host: host.sshTarget, command: "tmux kill-session -t \(session.name)")
+            case .screen:
+                _ = try await ShellCommand.ssh(host: host.sshTarget, command: "screen -X -S \(session.name) quit")
+            case .none:
+                break
+            }
+            AppLog.shared.log("Killed session \(host.alias)/\(session.name)")
+            // Refresh session list
+            await checkHost(host)
+        } catch {
+            lastError[host.id] = error.localizedDescription
+            AppLog.shared.log("Kill session \(host.alias)/\(session.name) failed: \(error.localizedDescription)", level: .error)
         }
     }
 

@@ -13,7 +13,6 @@ struct SSHHost: Identifiable, Codable, Hashable {
     // User-configurable
     var isManaged: Bool = false
     var isFavorite: Bool = false
-    var showRemoteInfo: Bool = false
     var group: String?
 
     var displayName: String {

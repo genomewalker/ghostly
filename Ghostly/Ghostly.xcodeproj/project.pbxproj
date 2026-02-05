@@ -21,7 +21,7 @@
 		A10012 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10012; };
 		A10013 /* SSHConfigParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10013; };
 		A10014 /* SSHService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10014; };
-		A10015 /* AbducoService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10015; };
+		A10015 /* SessionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10015; };
 		A10016 /* RemoteInfoService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10016; };
 		A10017 /* GhosttyService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10017; };
 		A10018 /* ShellCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10018; };
@@ -49,7 +49,7 @@
 		B10012 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		B10013 /* SSHConfigParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHConfigParser.swift; sourceTree = "<group>"; };
 		B10014 /* SSHService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHService.swift; sourceTree = "<group>"; };
-		B10015 /* AbducoService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AbducoService.swift; sourceTree = "<group>"; };
+		B10015 /* SessionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionService.swift; sourceTree = "<group>"; };
 		B10016 /* RemoteInfoService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteInfoService.swift; sourceTree = "<group>"; };
 		B10017 /* GhosttyService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyService.swift; sourceTree = "<group>"; };
 		B10018 /* ShellCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellCommand.swift; sourceTree = "<group>"; };
@@ -146,7 +146,7 @@
 			children = (
 				B10013 /* SSHConfigParser.swift */,
 				B10014 /* SSHService.swift */,
-				B10015 /* AbducoService.swift */,
+				B10015 /* SessionService.swift */,
 				B10016 /* RemoteInfoService.swift */,
 				B10017 /* GhosttyService.swift */,
 			);
@@ -276,7 +276,7 @@
 				A10012 /* SettingsView.swift in Sources */,
 				A10013 /* SSHConfigParser.swift in Sources */,
 				A10014 /* SSHService.swift in Sources */,
-				A10015 /* AbducoService.swift in Sources */,
+				A10015 /* SessionService.swift in Sources */,
 				A10016 /* RemoteInfoService.swift in Sources */,
 				A10017 /* GhosttyService.swift in Sources */,
 				A10018 /* ShellCommand.swift in Sources */,

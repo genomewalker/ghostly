@@ -7,6 +7,7 @@ struct MenuBarView: View {
     @State private var newSessionName = ""
     @State private var showNewSessionFor: String?
     @State private var showConsole = false
+    @State private var expandedHosts: Set<String> = []
 
     private var selectedMode: TerminalOpenMode {
         TerminalOpenMode(rawValue: terminalOpenMode) ?? .newWindow
@@ -254,8 +255,31 @@ struct MenuBarView: View {
                 sessions: hostSessions,
                 remoteInfo: info,
                 errorMessage: error,
-                onConnect: { Task { await manager.connect(host: host, openMode: openMode()) } },
-                onReattach: { session in Task { await manager.reattach(host: host, session: session, openMode: openMode()) } },
+                isExpanded: Binding(
+                    get: { expandedHosts.contains(host.id) },
+                    set: { newValue in
+                        if newValue { expandedHosts.insert(host.id) }
+                        else { expandedHosts.remove(host.id) }
+                    }
+                ),
+                onConnect: {
+                    let mode = openMode()
+                    Task { await manager.connect(host: host, openMode: mode) }
+                },
+                onReattach: { session in
+                    let mode = openMode()
+                    Task { await manager.reattach(host: host, session: session, openMode: mode) }
+                },
+                onNewSession: {
+                    AppLog.shared.log("New session tapped for \(host.alias)")
+                    showNewSessionFor = host.id
+                    newSessionName = ""
+                },
+                onKillSession: { session in
+                    Task {
+                        await manager.killSession(host: host, session: session)
+                    }
+                },
                 onInstallBackend: { Task { await manager.installSessionBackend(on: host) } },
                 onToggleManaged: { manager.toggleManaged(host) },
                 onToggleFavorite: { manager.toggleFavorite(host) }
@@ -265,34 +289,20 @@ struct MenuBarView: View {
             if status == .connected {
                 HStack(spacing: 8) {
                     Button("Connect") {
-                        Task { await manager.connect(host: host, openMode: openMode()) }
+                        let mode = openMode()
+                        Task { await manager.connect(host: host, openMode: mode) }
                     }
                     .font(.system(size: 11))
                     .buttonStyle(.borderless)
                     .help("Option+click: tab, Shift+click: split")
-
-                    if !hostSessions.isEmpty {
-                        Menu("Reattach") {
-                            SessionListView(
-                                sessions: hostSessions,
-                                onReattach: { session in
-                                    Task { await manager.reattach(host: host, session: session, openMode: openMode()) }
-                                },
-                                onNewSession: {
-                                    showNewSessionFor = host.id
-                                }
-                            )
-                        }
-                        .font(.system(size: 11))
-                        .menuStyle(.borderlessButton)
-                    }
 
                     Spacer()
 
                     // Context menu
                     Menu {
                         Button("Plain SSH") {
-                            Task { await manager.plainSSH(host: host, openMode: openMode()) }
+                            let mode = openMode()
+                            Task { await manager.plainSSH(host: host, openMode: mode) }
                         }
                         Button(host.isFavorite ? "Unfavorite" : "Favorite") {
                             manager.toggleFavorite(host)
@@ -332,22 +342,34 @@ struct MenuBarView: View {
 
             // New session name input
             if showNewSessionFor == host.id {
-                HStack {
+                HStack(spacing: 6) {
                     TextField("Session name", text: $newSessionName)
                         .font(.system(size: 11))
                         .textFieldStyle(.roundedBorder)
                         .onSubmit {
-                            let name = newSessionName.isEmpty ? "session-\(Int.random(in: 100...999))" : newSessionName
-                            Task { await manager.connect(host: host, sessionName: name, openMode: openMode()) }
-                            showNewSessionFor = nil
-                            newSessionName = ""
+                            createNewSession(host: host)
                         }
-                    Button("Cancel") {
+                    Button {
+                        createNewSession(host: host)
+                    } label: {
+                        Text("Create")
+                            .font(.system(size: 10, weight: .medium))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.accentColor)
+                            .foregroundColor(.white)
+                            .cornerRadius(4)
+                    }
+                    .buttonStyle(.plain)
+                    Button {
                         showNewSessionFor = nil
                         newSessionName = ""
+                    } label: {
+                        Text("Cancel")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
                     }
-                    .font(.system(size: 10))
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.plain)
                 }
                 .padding(.leading, 14)
             }
@@ -380,7 +402,8 @@ struct MenuBarView: View {
             .help(host.isFavorite ? "Remove from favorites" : "Add to favorites")
 
             Button("Connect") {
-                Task { await manager.connect(host: host, openMode: openMode()) }
+                let mode = openMode()
+                Task { await manager.connect(host: host, openMode: mode) }
             }
             .font(.system(size: 10))
             .buttonStyle(.borderless)
@@ -417,7 +440,8 @@ struct MenuBarView: View {
             Spacer()
 
             Button("Connect") {
-                Task { await manager.connect(host: host, openMode: openMode()) }
+                let mode = openMode()
+                Task { await manager.connect(host: host, openMode: mode) }
             }
             .font(.system(size: 10))
             .buttonStyle(.borderless)
@@ -435,6 +459,17 @@ struct MenuBarView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 3)
+    }
+
+    // MARK: - New Session Helper
+    private func createNewSession(host: SSHHost) {
+        let name = newSessionName.trimmingCharacters(in: .whitespaces)
+        let sessionName = name.isEmpty ? "session-\(Int.random(in: 100...999))" : name
+        AppLog.shared.log("Creating new session '\(sessionName)' on \(host.alias)")
+        let mode = openMode()
+        Task { await manager.connect(host: host, sessionName: sessionName, openMode: mode) }
+        showNewSessionFor = nil
+        newSessionName = ""
     }
 
     private func statusColor(_ status: ConnectionStatus) -> Color {

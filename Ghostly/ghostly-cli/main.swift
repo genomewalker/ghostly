@@ -4,6 +4,14 @@ import Foundation
 // Usage: ghostly <command> [args]
 
 let args = CommandLine.arguments
+let verbose = args.contains("-v") || args.contains("--verbose")
+let startTime = Date()
+
+func vlog(_ msg: String) {
+    guard verbose else { return }
+    let elapsed = String(format: "%.3f", Date().timeIntervalSince(startTime))
+    FileHandle.standardError.write("[\(elapsed)s] \(msg)\n".data(using: .utf8)!)
+}
 
 func printUsage() {
     let usage = """
@@ -14,19 +22,22 @@ func printUsage() {
       ghostly attach <host> <session>        Reattach to existing session
       ghostly ssh <host>                     Plain SSH (no session multiplexer)
       ghostly list                           List all SSH hosts from config
-      ghostly sessions <host>                List sessions on host
+      ghostly sessions [host]                List sessions (all hosts if none specified)
       ghostly status                         Show connection status
       ghostly setup <host>                   Install ghostly-session on remote host
 
     Options:
       -s, --session <name>    Session name (default: "default")
+      -v, --verbose           Show timing debug info
       -h, --help              Show this help
 
     Examples:
-      ghostly connect dandy-08
-      ghostly connect dandy-08 -s coding
-      ghostly attach dandy-08 coding
-      ghostly sessions dandy-08
+      ghostly connect myhost
+      ghostly connect myhost -s coding
+      ghostly attach myhost coding
+      ghostly attach myhost coding -v
+      ghostly sessions myhost
+      ghostly sessions
     """
     print(usage)
 }
@@ -142,8 +153,13 @@ case "connect":
     }
 
     print("Connecting to \(host) (session: \(sessionName))...")
+    vlog("Sending IPC notification...")
     IPCClient.notifyConnect(host: host, session: sessionName)
-    let status = shell("ssh -t \(host) 'ghostly-session open \(sessionName) || ~/.local/bin/ghostly-session open \(sessionName)'")
+    vlog("IPC done. Starting SSH...")
+    let sshVerbose = verbose ? "-v" : ""
+    let sshCmd = "ssh -t \(sshVerbose) \(host) -- ~/.local/bin/ghostly-session open \(sessionName)"
+    vlog("Command: \(sshCmd)")
+    let status = shell(sshCmd)
     IPCClient.notifyDisconnect(host: host)
     exit(status)
 
@@ -156,8 +172,13 @@ case "attach":
     let session = args[3]
 
     print("Reattaching to \(host):\(session)...")
+    vlog("Sending IPC notification...")
     IPCClient.notifyConnect(host: host, session: session)
-    let status = shell("ssh -t \(host) 'ghostly-session attach \(session) || ~/.local/bin/ghostly-session attach \(session)'")
+    vlog("IPC done. Starting SSH...")
+    let sshVerbose = verbose ? "-v" : ""
+    let sshCmd = "ssh -t \(sshVerbose) \(host) -- ~/.local/bin/ghostly-session open \(session)"
+    vlog("Command: \(sshCmd)")
+    let status = shell(sshCmd)
     IPCClient.notifyDisconnect(host: host)
     exit(status)
 
@@ -168,7 +189,8 @@ case "ssh":
     }
     let host = args[2]
     IPCClient.notifyConnect(host: host)
-    let status = shell("ssh \(host)")
+    let sshVerbose = verbose ? "-v" : ""
+    let status = shell("ssh \(sshVerbose) \(host)")
     IPCClient.notifyDisconnect(host: host)
     exit(status)
 
@@ -188,14 +210,39 @@ case "list":
     }
 
 case "sessions":
-    guard args.count >= 3 else {
-        print("Error: specify a host")
-        exit(1)
+    if args.count >= 3 {
+        // Single host
+        let host = args[2]
+        print("Sessions on \(host):")
+        let status = shell("ssh \(host) -- ~/.local/bin/ghostly-session list 2>/dev/null || echo 'ghostly-session not installed'")
+        exit(status)
+    } else {
+        // All managed hosts — check each SSH host for sessions
+        let hosts = parseSSHConfig()
+        if hosts.isEmpty {
+            print("No hosts in ~/.ssh/config")
+            exit(0)
+        }
+        print("Scanning \(hosts.count) hosts for active sessions...\n")
+        var foundAny = false
+        for (alias, _) in hosts {
+            if let output = shellOutput("ssh -o ConnectTimeout=5 -o BatchMode=yes \(alias) -- ~/.local/bin/ghostly-session list 2>/dev/null") {
+                let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty && !trimmed.contains("not installed") {
+                    print("\(alias):")
+                    for line in trimmed.components(separatedBy: .newlines) {
+                        print("  \(line)")
+                    }
+                    print()
+                    foundAny = true
+                }
+            }
+        }
+        if !foundAny {
+            print("No active sessions found on any host.")
+        }
+        exit(0)
     }
-    let host = args[2]
-    print("Sessions on \(host):")
-    let status = shell("ssh \(host) 'ghostly-session list 2>/dev/null || ~/.local/bin/ghostly-session list 2>/dev/null || echo \"ghostly-session not installed\"'")
-    exit(status)
 
 case "status":
     let hosts = parseSSHConfig()
@@ -224,7 +271,7 @@ case "setup":
     print("Installing ghostly-session on \(host)...")
 
     // Check if already installed
-    if let _ = shellOutput("ssh \(host) 'command -v ghostly-session 2>/dev/null || test -x ~/.local/bin/ghostly-session && echo found'") {
+    if let _ = shellOutput("ssh \(host) -- test -x ~/.local/bin/ghostly-session 2>/dev/null && echo found") {
         print("ghostly-session is already installed on \(host)")
         exit(0)
     }
