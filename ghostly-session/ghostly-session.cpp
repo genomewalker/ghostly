@@ -991,17 +991,52 @@ static std::vector<SessionInfo> enumerate_sessions() {
     return result;
 }
 
+static std::string format_duration(time_t seconds) {
+    if (seconds < 60) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%lds", (long)seconds);
+        return buf;
+    }
+    if (seconds < 3600) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%ldm", (long)(seconds / 60));
+        return buf;
+    }
+    if (seconds < 86400) {
+        long h = seconds / 3600;
+        long m = (seconds % 3600) / 60;
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%ldh%02ldm", h, m);
+        return buf;
+    }
+    long d = seconds / 86400;
+    long h = (seconds % 86400) / 3600;
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%ldd%02ldh", d, h);
+    return buf;
+}
+
+static std::string format_time(time_t t) {
+    struct tm *lt = localtime(&t);
+    char buf[32];
+    strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", lt);
+    return buf;
+}
+
 static int cmd_list(bool json) {
     auto sessions = enumerate_sessions();
+    time_t now = time(NULL);
 
     if (json) {
         printf("{\"sessions\":[");
         for (size_t i = 0; i < sessions.size(); i++) {
             if (i > 0) printf(",");
-            printf("{\"name\":\"%s\",\"clients\":%d,\"created\":%ld,\"command\":\"%s\",\"pid\":%d}",
+            long uptime = (sessions[i].created > 0) ? (long)(now - sessions[i].created) : 0;
+            printf("{\"name\":\"%s\",\"clients\":%d,\"created\":%ld,\"uptime\":%ld,\"command\":\"%s\",\"pid\":%d}",
                    json_escape(sessions[i].name).c_str(),
                    sessions[i].clients,
                    (long)sessions[i].created,
+                   uptime,
                    json_escape(sessions[i].command).c_str(),
                    (int)sessions[i].pid);
         }
@@ -1012,8 +1047,11 @@ static int cmd_list(bool json) {
         } else {
             printf("Active sessions:\n");
             for (auto &s : sessions) {
-                printf("  %-20s  pid=%-6d  clients=%d  cmd=%s\n",
-                       s.name.c_str(), (int)s.pid, s.clients, s.command.c_str());
+                std::string uptime = (s.created > 0) ? format_duration(now - s.created) : "?";
+                std::string created = (s.created > 0) ? format_time(s.created) : "?";
+                printf("  %-16s  up %-8s  clients=%d  created=%s  cmd=%s\n",
+                       s.name.c_str(), uptime.c_str(), s.clients,
+                       created.c_str(), s.command.c_str());
             }
         }
     }
