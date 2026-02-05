@@ -44,7 +44,7 @@
 // For getloadavg
 #include <cstdlib>
 
-#define GHOSTLY_VERSION "1.1.0"
+#define GHOSTLY_VERSION "1.2.0"
 
 // ============================================================================
 // 2. Constants, types, protocol definitions
@@ -67,10 +67,15 @@ static const int MAX_CLIENTS = 16;
 static const int BUF_SIZE = 8192;
 // Scrollback buffer: replayed to new clients on attach
 static const int SCROLLBACK_SIZE = 128 * 1024; // 128KB
+// Alt-screen replay limit: only replay last 8KB for TUI apps (htop, vim, etc.)
+static const int ALT_SCREEN_REPLAY = 8 * 1024;
 // Max session name length
 static const int MAX_NAME_LEN = 64;
 // Socket read timeout for client connections (seconds)
 static const int CLIENT_RECV_TIMEOUT = 30;
+
+// HELLO flags (byte 4, optional)
+static const uint8_t HELLO_FLAG_NO_REPLAY = 0x01;
 
 // ============================================================================
 // 3. Utility functions
@@ -316,8 +321,9 @@ struct ScrollbackBuffer {
     uint8_t data[SCROLLBACK_SIZE];
     int head;   // next write position
     int count;  // bytes stored (up to SCROLLBACK_SIZE)
+    bool in_alt_screen; // true when TUI app is using alternate screen buffer
 
-    void reset() { head = 0; count = 0; }
+    void reset() { head = 0; count = 0; in_alt_screen = false; }
 
     void append(const uint8_t *buf, int len) {
         for (int i = 0; i < len; i++) {
@@ -327,11 +333,43 @@ struct ScrollbackBuffer {
         }
     }
 
-    // Replay stored data to a single client fd via MSG_DATA
-    bool replay_to(int fd) const {
-        if (count == 0) return true;
-        int start = (head - count + SCROLLBACK_SIZE) % SCROLLBACK_SIZE;
-        int remaining = count;
+    // Scan PTY output for alternate screen enter/exit sequences.
+    // Detects: CSI ?1049h/l, CSI ?47h/l, CSI ?1047h/l
+    // Called after append() with the same buffer.
+    void scan_alt_screen(const uint8_t *buf, int len) {
+        for (int i = 0; i < len; i++) {
+            if (buf[i] != 0x1b) continue;     // ESC
+            if (i + 1 >= len || buf[i+1] != '[') continue;  // CSI
+            if (i + 2 >= len || buf[i+2] != '?') continue;  // DEC private
+            // Parse number
+            int j = i + 3;
+            int num = 0;
+            while (j < len && buf[j] >= '0' && buf[j] <= '9') {
+                num = num * 10 + (buf[j] - '0');
+                j++;
+            }
+            if (j >= len) break;
+            if (num == 1049 || num == 47 || num == 1047) {
+                if (buf[j] == 'h') in_alt_screen = true;
+                else if (buf[j] == 'l') in_alt_screen = false;
+            }
+        }
+    }
+
+    // Replay stored data to a single client fd via MSG_DATA.
+    // If skip_replay is true, send nothing (fast attach).
+    // If in alt-screen mode, only replay last ALT_SCREEN_REPLAY bytes
+    // (one screenful) to avoid replaying thousands of TUI redraws.
+    bool replay_to(int fd, bool skip_replay = false) const {
+        if (count == 0 || skip_replay) return true;
+
+        int replay_count = count;
+        if (in_alt_screen && replay_count > ALT_SCREEN_REPLAY) {
+            replay_count = ALT_SCREEN_REPLAY;
+        }
+
+        int start = (head - replay_count + SCROLLBACK_SIZE) % SCROLLBACK_SIZE;
+        int remaining = replay_count;
         while (remaining > 0) {
             int chunk = remaining;
             // Don't wrap around the buffer boundary
@@ -379,6 +417,13 @@ static void server_sigchld(int) {
 }
 
 static void server_sigterm(int) {
+    if (g_server) g_server->running = false;
+}
+
+static void server_sighup(int) {
+    // Forward HUP to child (terminal hangup) and shut down
+    if (g_server && g_server->child_pid > 0)
+        kill(g_server->child_pid, SIGHUP);
     if (g_server) g_server->running = false;
 }
 
@@ -492,19 +537,24 @@ static int run_server(const std::string &name, const std::string &cmd) {
 
     signal(SIGCHLD, server_sigchld);
     signal(SIGTERM, server_sigterm);
+    signal(SIGHUP, server_sighup);
     signal(SIGPIPE, SIG_IGN);
 
     // Event loop with poll()
     while (srv.running) {
         // Build pollfd array: [listen_fd, pty_master, client0, client1, ...]
+        // Save client count BEFORE poll — new clients accepted this iteration
+        // must NOT be processed (their fds aren't in the poll set).
+        int poll_num_clients = srv.num_clients;
+
         std::vector<struct pollfd> fds;
-        fds.resize(2 + srv.num_clients);
+        fds.resize(2 + poll_num_clients);
 
         fds[0].fd = listen_fd;
         fds[0].events = POLLIN;
         fds[1].fd = pty_master;
         fds[1].events = POLLIN;
-        for (int i = 0; i < srv.num_clients; i++) {
+        for (int i = 0; i < poll_num_clients; i++) {
             fds[2 + i].fd = srv.client_fds[i];
             fds[2 + i].events = POLLIN;
         }
@@ -513,6 +563,14 @@ static int run_server(const std::string &name, const std::string &cmd) {
         if (ret < 0) {
             if (errno == EINTR) continue;
             break;
+        }
+
+        // Keepalive: on poll timeout, send zero-length DATA to each client.
+        // If the write fails (EPIPE/ECONNRESET), the client is dead — remove it.
+        // This detects stale connections even when the session is idle.
+        // Note: only keepalive clients that were in the poll set.
+        if (ret == 0 && poll_num_clients > 0) {
+            server_broadcast(srv, MSG_DATA, NULL, 0);
         }
 
         // Check for new client connections
@@ -534,10 +592,12 @@ static int run_server(const std::string &name, const std::string &cmd) {
                     tv.tv_usec = 0;
                     setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
+                    uint8_t hello_flags = 0;
                     if (recv_msg(cfd, &type, &data, &len)) {
-                        if (type == MSG_HELLO && len == 4) {
+                        if (type == MSG_HELLO && (len == 4 || len == 5)) {
                             uint16_t cols = ((uint16_t)data[0] << 8) | data[1];
                             uint16_t rows = ((uint16_t)data[2] << 8) | data[3];
+                            if (len == 5) hello_flags = data[4];
                             struct winsize ws;
                             ws.ws_col = cols;
                             ws.ws_row = rows;
@@ -552,7 +612,9 @@ static int run_server(const std::string &name, const std::string &cmd) {
 
                     if (hello_ok) {
                         // Replay scrollback history to new client
-                        srv.scrollback->replay_to(cfd);
+                        // Skip if client requested no-replay (fast attach)
+                        bool skip = (hello_flags & HELLO_FLAG_NO_REPLAY) != 0;
+                        srv.scrollback->replay_to(cfd, skip);
 
                         // Set operational recv timeout [FIX #5]
                         set_recv_timeout(cfd, CLIENT_RECV_TIMEOUT);
@@ -574,6 +636,7 @@ static int run_server(const std::string &name, const std::string &cmd) {
             ssize_t n = read(pty_master, buf, sizeof(buf));
             if (n > 0) {
                 srv.scrollback->append(buf, (int)n);
+                srv.scrollback->scan_alt_screen(buf, (int)n);
                 server_broadcast(srv, MSG_DATA, buf, (uint32_t)n);
             } else if (n == 0 || (n < 0 && errno != EAGAIN && errno != EINTR)) {
                 srv.running = false;
@@ -583,8 +646,8 @@ static int run_server(const std::string &name, const std::string &cmd) {
             srv.running = false;
         }
 
-        // Client input
-        for (int i = srv.num_clients - 1; i >= 0; i--) {
+        // Client input — only process clients that were in the poll set
+        for (int i = poll_num_clients - 1; i >= 0; i--) {
             if (fds[2 + i].revents & (POLLIN | POLLHUP | POLLERR)) {
                 MsgType type;
                 uint8_t *data = NULL;
@@ -761,7 +824,7 @@ static int connect_to_session(const std::string &name) {
     return fd;
 }
 
-static int cmd_attach(const std::string &name) {
+static int cmd_attach(const std::string &name, bool no_replay = false) {
     // [FIX #1] Validate session name
     if (!valid_session_name(name)) {
         fprintf(stderr, "Invalid session name '%s'\n", name.c_str());
@@ -771,25 +834,40 @@ static int cmd_attach(const std::string &name) {
     // [FIX #4] Ignore SIGPIPE so writes to dead socket don't kill us
     signal(SIGPIPE, SIG_IGN);
 
-    int sock_fd = connect_to_session(name);
-    if (sock_fd < 0) {
-        fprintf(stderr, "Cannot attach to session '%s': not running\n", name.c_str());
+    // Better error messages for attach failures
+    std::string spath = socket_path(name);
+    if (!file_exists(spath)) {
+        fprintf(stderr, "Session '%s' does not exist.\n", name.c_str());
+        fprintf(stderr, "Use 'ghostly-session open %s' to create it, or 'ghostly-session list' to see active sessions.\n", name.c_str());
+        return 1;
+    }
+    pid_t dpid = read_pid_file(pid_path(name));
+    if (dpid > 0 && !process_alive(dpid)) {
+        fprintf(stderr, "Session '%s' has a stale socket (daemon pid %d is dead). Cleaning up.\n", name.c_str(), (int)dpid);
+        cleanup_session_files(name);
         return 1;
     }
 
-    // Send HELLO with window size
+    int sock_fd = connect_to_session(name);
+    if (sock_fd < 0) {
+        fprintf(stderr, "Cannot connect to session '%s': socket exists but connection refused.\n", name.c_str());
+        return 1;
+    }
+
+    // Send HELLO with window size + optional flags byte
     struct winsize ws;
     if (ioctl(STDIN_FILENO, TIOCGWINSZ, &ws) < 0) {
         // Not a TTY? Use defaults
         ws.ws_col = 80;
         ws.ws_row = 24;
     }
-    uint8_t hello[4];
+    uint8_t hello[5];
     hello[0] = (ws.ws_col >> 8) & 0xFF;
     hello[1] = ws.ws_col & 0xFF;
     hello[2] = (ws.ws_row >> 8) & 0xFF;
     hello[3] = ws.ws_row & 0xFF;
-    if (!send_msg(sock_fd, MSG_HELLO, hello, 4)) {
+    hello[4] = no_replay ? HELLO_FLAG_NO_REPLAY : 0;
+    if (!send_msg(sock_fd, MSG_HELLO, hello, 5)) {
         fprintf(stderr, "Failed to send HELLO to session '%s'\n", name.c_str());
         close(sock_fd);
         return 1;
@@ -853,7 +931,16 @@ static int cmd_attach(const std::string &name) {
                 }
             } else if (n == 0) {
                 running = false;
+            } else {
+                // Read error (EIO when pty master closed by sshd, etc.)
+                if (errno != EINTR && errno != EAGAIN) {
+                    running = false;
+                }
             }
+        }
+        // Stdin closed/error (sshd died, SSH disconnected)
+        if (fds[0].revents & (POLLHUP | POLLERR)) {
+            running = false;
         }
 
         // Server → stdout
@@ -869,7 +956,12 @@ static int cmd_attach(const std::string &name) {
 
             switch (type) {
             case MSG_DATA:
-                if (len > 0) write_all(STDOUT_FILENO, data, len);
+                if (len > 0) {
+                    if (!write_all(STDOUT_FILENO, data, len)) {
+                        // Stdout broken (SSH pipe closed)
+                        running = false;
+                    }
+                }
                 break;
             case MSG_EXIT:
                 if (len >= 1) exit_code = data[0];
@@ -894,7 +986,8 @@ static int cmd_attach(const std::string &name) {
 // 8. open command: create-or-attach
 // ============================================================================
 
-static int cmd_open(const std::string &name, const std::string &cmd) {
+static int cmd_open(const std::string &name, const std::string &cmd,
+                    bool no_replay = false) {
     // [FIX #1] Validate session name
     if (!valid_session_name(name)) {
         fprintf(stderr, "Invalid session name '%s': use alphanumeric, dash, underscore, dot (max %d chars)\n",
@@ -907,7 +1000,7 @@ static int cmd_open(const std::string &name, const std::string &cmd) {
     if (file_exists(spath)) {
         pid_t pid = read_pid_file(pid_path(name));
         if (pid > 0 && process_alive(pid)) {
-            return cmd_attach(name);
+            return cmd_attach(name, no_replay);
         }
         // Stale
         cleanup_session_files(name);
@@ -918,7 +1011,7 @@ static int cmd_open(const std::string &name, const std::string &cmd) {
     if (rc != 0) return rc;
     // Small delay for daemon startup
     usleep(100000);
-    return cmd_attach(name);
+    return cmd_attach(name, no_replay);
 }
 
 // ============================================================================
@@ -1213,12 +1306,15 @@ static void print_usage() {
         "\n"
         "Usage:\n"
         "  ghostly-session create <name> [-- cmd...]   Create session (daemonizes)\n"
-        "  ghostly-session attach <name>               Attach to session\n"
+        "  ghostly-session attach <name> [--no-replay] Attach to session\n"
         "  ghostly-session open <name> [-- cmd...]     Create-or-attach\n"
         "  ghostly-session list [--json]               List sessions\n"
         "  ghostly-session info [--json]               System info\n"
         "  ghostly-session kill <name>                 Kill session\n"
         "  ghostly-session version                     Version info\n"
+        "\n"
+        "Options:\n"
+        "  --no-replay   Skip scrollback replay on attach (fast reattach)\n"
         "\n"
         "Session names: alphanumeric, dash, underscore, dot (max %d chars)\n"
         "Detach key: Ctrl+\\ (0x1C)\n",
@@ -1261,25 +1357,32 @@ int main(int argc, char **argv) {
 
     } else if (subcmd == "attach") {
         if (argc < 3) {
-            fprintf(stderr, "Usage: ghostly-session attach <name>\n");
+            fprintf(stderr, "Usage: ghostly-session attach <name> [--no-replay]\n");
             return 1;
         }
-        return cmd_attach(argv[2]);
+        bool no_replay = false;
+        for (int i = 3; i < argc; i++) {
+            if (strcmp(argv[i], "--no-replay") == 0) no_replay = true;
+        }
+        return cmd_attach(argv[2], no_replay);
 
     } else if (subcmd == "open") {
         if (argc < 3) {
-            fprintf(stderr, "Usage: ghostly-session open <name> [-- cmd...]\n");
+            fprintf(stderr, "Usage: ghostly-session open <name> [--no-replay] [-- cmd...]\n");
             return 1;
         }
         std::string name = argv[2];
         std::string cmd;
+        bool no_replay = false;
         for (int i = 3; i < argc; i++) {
-            if (strcmp(argv[i], "--") == 0) {
+            if (strcmp(argv[i], "--no-replay") == 0) {
+                no_replay = true;
+            } else if (strcmp(argv[i], "--") == 0) {
                 cmd = collect_cmd(argc, argv, i + 1);
                 break;
             }
         }
-        return cmd_open(name, cmd);
+        return cmd_open(name, cmd, no_replay);
 
     } else if (subcmd == "list") {
         bool json = (argc >= 3 && strcmp(argv[2], "--json") == 0);

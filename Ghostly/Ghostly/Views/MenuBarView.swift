@@ -282,7 +282,15 @@ struct MenuBarView: View {
                 },
                 onInstallBackend: { Task { await manager.installSessionBackend(on: host) } },
                 onToggleManaged: { manager.toggleManaged(host) },
-                onToggleFavorite: { manager.toggleFavorite(host) }
+                onToggleFavorite: { manager.toggleFavorite(host) },
+                onShowInfo: {
+                    HostInfoWindowController.shared.show(
+                        host: host,
+                        info: info,
+                        sessions: hostSessions,
+                        status: status
+                    )
+                }
             )
 
             // Action buttons

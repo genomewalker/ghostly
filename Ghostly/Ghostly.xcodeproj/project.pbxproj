@@ -29,6 +29,7 @@
 		A10020 /* TerminalTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10021; };
 		A10023 /* AppLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10023; };
 		A10024 /* ConsoleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10024; };
+		A10025 /* HostInfoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10025; };
 		A10022 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10022; };
 		A10030 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10030; };
 		A10031 /* IPCClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10031; };
@@ -58,6 +59,7 @@
 		B10021 /* TerminalTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalTypes.swift; sourceTree = "<group>"; };
 		B10023 /* AppLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLog.swift; sourceTree = "<group>"; };
 		B10024 /* ConsoleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConsoleView.swift; sourceTree = "<group>"; };
+		B10025 /* HostInfoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostInfoView.swift; sourceTree = "<group>"; };
 		B10022 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B10030 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		B10031 /* IPCClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPCClient.swift; sourceTree = "<group>"; };
@@ -137,6 +139,7 @@
 				B10011 /* SessionListView.swift */,
 				B10012 /* SettingsView.swift */,
 				B10024 /* ConsoleView.swift */,
+				B10025 /* HostInfoView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -284,6 +287,7 @@
 				A10020 /* TerminalTypes.swift in Sources */,
 				A10023 /* AppLog.swift in Sources */,
 				A10024 /* ConsoleView.swift in Sources */,
+				A10025 /* HostInfoView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -366,12 +370,12 @@
 				CODE_SIGN_ENTITLEMENTS = Ghostly.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				MARKETING_VERSION = 1.1.0;
+				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ghostly.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -386,12 +390,12 @@
 				CODE_SIGN_ENTITLEMENTS = Ghostly.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				MARKETING_VERSION = 1.1.0;
+				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ghostly.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;

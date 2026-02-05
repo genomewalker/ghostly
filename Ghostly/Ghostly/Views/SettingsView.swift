@@ -48,6 +48,7 @@ struct SettingsView: View {
     @State private var automationStatus: String = "Unknown"
     @State private var automationGranted: Bool? = nil
     @State private var checkingAutomation = false
+    @State private var appManagementGranted: Bool? = nil
     @State private var cliInstalled = FileManager.default.isExecutableFile(atPath: "/usr/local/bin/ghostly")
     @State private var cliInstalling = false
     @State private var cliError: String?
@@ -114,13 +115,41 @@ struct SettingsView: View {
                             .foregroundColor(.secondary)
                     }
                     Text("Automation")
-                    Text("— terminal control")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    if automationGranted == true {
+                        Text("— terminal control")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text("— \(automationStatus)")
+                            .font(.caption)
+                            .foregroundColor(.red)
+                    }
                     Spacer()
                     if automationGranted != true {
                         Button("Open Settings") {
                             openAutomationSettings()
+                        }
+                        .font(.caption)
+                    }
+                }
+
+                // App Management
+                HStack {
+                    if let granted = appManagementGranted {
+                        Image(systemName: granted ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            .foregroundColor(granted ? .green : .red)
+                    } else {
+                        Image(systemName: "questionmark.circle")
+                            .foregroundColor(.secondary)
+                    }
+                    Text("App Management")
+                    Text("— install & update")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    if appManagementGranted != true {
+                        Button("Open Settings") {
+                            openAppManagementSettings()
                         }
                         .font(.caption)
                     }
@@ -141,8 +170,13 @@ struct SettingsView: View {
                     .buttonStyle(.borderless)
                 }
 
-                if !accessibilityGranted {
-                    Text("Note: After granting access in System Settings, you may need to restart Ghostly for it to take effect.")
+                if !accessibilityGranted || automationGranted != true {
+                    Text("Tabs & splits require Accessibility + Automation for System Events and your terminal. After granting, restart Ghostly.")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                }
+                if appManagementGranted == false {
+                    Text("App Management is needed to install updates and the CLI tool to /usr/local/bin.")
                         .font(.caption)
                         .foregroundColor(.orange)
                 }
@@ -209,6 +243,7 @@ struct SettingsView: View {
             accessibilityGranted = AXIsProcessTrusted()
             cliInstalled = FileManager.default.isExecutableFile(atPath: "/usr/local/bin/ghostly")
             checkAutomationPermission()
+            checkAppManagementPermission()
         }
     }
 
@@ -217,6 +252,7 @@ struct SettingsView: View {
     private func refreshPermissions() {
         accessibilityGranted = AXIsProcessTrusted()
         checkAutomationPermission()
+        checkAppManagementPermission()
     }
 
     private func openAccessibilitySettings() {
@@ -231,9 +267,24 @@ struct SettingsView: View {
         }
     }
 
+    private func openAppManagementSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AppManagement") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func checkAppManagementPermission() {
+        // Test if we can write to /Applications (proxy for App Management permission)
+        let testPath = "/Applications/.ghostly-permission-test"
+        let canWrite = FileManager.default.createFile(atPath: testPath, contents: nil)
+        if canWrite {
+            try? FileManager.default.removeItem(atPath: testPath)
+        }
+        appManagementGranted = canWrite
+    }
+
     private func checkAutomationPermission() {
         checkingAutomation = true
-        // Determine which terminal to test based on preference
         let terminalApp: String
         let pref = PreferredTerminal(rawValue: preferredTerminal) ?? .auto
         switch pref {
@@ -242,16 +293,31 @@ struct SettingsView: View {
         default: terminalApp = "Ghostty"
         }
 
-        // Test automation by sending a harmless AppleScript
+        // Test automation for both System Events AND the target terminal
         Task.detached {
-            let script = "tell application \"System Events\" to name of first process whose name is \"Finder\""
-            var errorInfo: NSDictionary?
-            let appleScript = NSAppleScript(source: script)
-            let result = appleScript?.executeAndReturnError(&errorInfo)
-            let granted = result != nil && errorInfo == nil
+            // Check System Events access
+            let sysScript = "tell application \"System Events\" to name of first process whose name is \"Finder\""
+            var sysErr: NSDictionary?
+            let sysResult = NSAppleScript(source: sysScript)?.executeAndReturnError(&sysErr)
+            let sysOK = sysResult != nil && sysErr == nil
+
+            // Check terminal app access (triggers permission prompt if not yet granted)
+            let termScript = "tell application \"\(terminalApp)\" to get name"
+            var termErr: NSDictionary?
+            let termResult = NSAppleScript(source: termScript)?.executeAndReturnError(&termErr)
+            let termOK = termResult != nil && termErr == nil
+
+            let granted = sysOK && termOK
 
             await MainActor.run {
                 automationGranted = granted
+                if !sysOK {
+                    automationStatus = "System Events: denied"
+                } else if !termOK {
+                    automationStatus = "\(terminalApp): denied"
+                } else {
+                    automationStatus = "Granted"
+                }
                 accessibilityGranted = AXIsProcessTrusted()
                 checkingAutomation = false
             }

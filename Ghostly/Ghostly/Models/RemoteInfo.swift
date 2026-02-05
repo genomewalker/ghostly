@@ -1,5 +1,7 @@
 import Foundation
 
+let ghostlyVersion = "1.2.0"
+
 struct RemoteInfo {
     var user: String?
     var condaEnv: String?
@@ -8,6 +10,7 @@ struct RemoteInfo {
     var slurmJobs: String?
     var activeSessions: Int?
     var sessionBackend: SessionBackend = .none
+    var remoteVersion: String?
     var lastUpdated: Date = Date()
 
     var hasSessionBackend: Bool {
@@ -24,5 +27,10 @@ struct RemoteInfo {
 
     var isStale: Bool {
         Date().timeIntervalSince(lastUpdated) > 120
+    }
+
+    var hasVersionMismatch: Bool {
+        guard let remote = remoteVersion else { return false }
+        return remote != ghostlyVersion
     }
 }

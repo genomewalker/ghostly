@@ -15,6 +15,7 @@ struct HostRowView: View {
     let onInstallBackend: () -> Void
     let onToggleManaged: () -> Void
     let onToggleFavorite: () -> Void
+    let onShowInfo: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -22,8 +23,22 @@ struct HostRowView: View {
             HStack(spacing: 6) {
                 statusIndicator
 
-                Text(host.displayName)
-                    .font(.system(size: 13, weight: .medium))
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        isExpanded.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(host.displayName)
+                            .font(.system(size: 13, weight: .medium))
+                        if status == .connected {
+                            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                                .font(.system(size: 8))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
 
                 if !sessions.isEmpty {
                     Text("\(sessions.count)")
@@ -45,16 +60,14 @@ struct HostRowView: View {
 
                 if status == .connected {
                     Button {
-                        withAnimation(.easeInOut(duration: 0.15)) {
-                            isExpanded.toggle()
-                        }
+                        onShowInfo()
                     } label: {
-                        Image(systemName: isExpanded ? "info.circle.fill" : "info.circle")
+                        Image(systemName: "info.circle")
                             .font(.system(size: 11))
-                            .foregroundColor(isExpanded ? .accentColor : .secondary)
+                            .foregroundColor(.secondary)
                     }
                     .buttonStyle(.borderless)
-                    .help(isExpanded ? "Collapse details" : "Show details")
+                    .help("Host details")
                 }
             }
 
@@ -88,6 +101,14 @@ struct HostRowView: View {
                     .padding(.leading, 14)
             }
 
+            // Version mismatch warning
+            if let info = remoteInfo, info.hasVersionMismatch, status == .connected {
+                Text("version mismatch: remote \(info.remoteVersion ?? "?") ≠ \(ghostlyVersion)")
+                    .font(.system(size: 10))
+                    .foregroundColor(.orange)
+                    .padding(.leading, 14)
+            }
+
             // Session backend not installed notice (always visible)
             if let info = remoteInfo, !info.hasSessionBackend, status == .connected {
                 HStack(spacing: 4) {
@@ -113,17 +134,20 @@ struct HostRowView: View {
         VStack(alignment: .leading, spacing: 2) {
             ForEach(sessions) { session in
                 HStack(spacing: 0) {
-                    if session.isActive {
-                        // Attached session: non-clickable, dimmed
+                    Button {
+                        onReattach(session)
+                    } label: {
                         HStack(spacing: 4) {
                             Circle()
-                                .fill(Color.green)
+                                .fill(session.isActive ? Color.green : Color.gray)
                                 .frame(width: 5, height: 5)
                             Text(session.name)
                                 .font(.system(size: 11))
-                            Text("attached")
-                                .font(.system(size: 9))
-                                .foregroundColor(.green.opacity(0.8))
+                            if session.isActive {
+                                Text("attached")
+                                    .font(.system(size: 9))
+                                    .foregroundColor(.green.opacity(0.8))
+                            }
                             if let dur = session.durationLabel {
                                 Text(dur)
                                     .font(.system(size: 9))
@@ -133,35 +157,11 @@ struct HostRowView: View {
                         }
                         .padding(.vertical, 2)
                         .padding(.horizontal, 4)
-                        .background(Color.green.opacity(0.04))
+                        .background(session.isActive ? Color.green.opacity(0.04) : Color.accentColor.opacity(0.06))
                         .cornerRadius(4)
-                        .opacity(0.6)
-                    } else {
-                        // Detached session: clickable
-                        Button {
-                            onReattach(session)
-                        } label: {
-                            HStack(spacing: 4) {
-                                Circle()
-                                    .fill(Color.gray)
-                                    .frame(width: 5, height: 5)
-                                Text(session.name)
-                                    .font(.system(size: 11))
-                                if let dur = session.durationLabel {
-                                    Text(dur)
-                                        .font(.system(size: 9))
-                                        .foregroundColor(.secondary)
-                                }
-                                Spacer()
-                            }
-                            .padding(.vertical, 2)
-                            .padding(.horizontal, 4)
-                            .background(Color.accentColor.opacity(0.06))
-                            .cornerRadius(4)
-                        }
-                        .buttonStyle(.borderless)
-                        .help("Attach to \(session.name)")
                     }
+                    .buttonStyle(.borderless)
+                    .help(session.isActive ? "Attach to \(session.name) (multi-attach)" : "Attach to \(session.name)")
 
                     // Kill button
                     Button {

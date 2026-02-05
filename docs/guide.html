@@ -181,6 +181,39 @@
     <p>Set your preferred terminal in <strong>Settings &gt; Terminal</strong>, or leave it on <strong>Auto</strong> to let Ghostly detect the best option.</p>
   </section>
 
+  <!-- SSH Config -->
+  <section class="doc-section" id="recommended-ssh-config">
+    <h2>Recommended SSH Config</h2>
+
+    <p>For the best experience with Ghostly, add these lines to the <strong>top</strong> of your <code>~/.ssh/config</code> (before any <code>Host</code> blocks):</p>
+
+    <div class="terminal">
+      <div class="terminal-chrome">
+        <div class="terminal-dot red"></div>
+        <div class="terminal-dot yellow"></div>
+        <div class="terminal-dot green"></div>
+        <div class="terminal-title">~/.ssh/config</div>
+      </div>
+      <div class="terminal-body">
+<span class="cmd">ServerAliveInterval 15</span>
+<span class="cmd">ServerAliveCountMax 3</span>
+      </div>
+    </div>
+
+    <p>This tells SSH to send a keepalive probe every 15 seconds. After 3 missed responses (~45 seconds), SSH disconnects. This is important because:</p>
+
+    <ul>
+      <li><strong>Fast stale detection</strong> &mdash; when your network drops (WiFi loss, laptop sleep, VPN disconnect), the remote host detects the dead connection within ~45 seconds and cleans up the session client count</li>
+      <li><strong>Prevents zombie "attached" sessions</strong> &mdash; without keepalive, TCP can take minutes (or even hours) to notice a dead connection, leaving ghost clients that show as "attached" in Ghostly</li>
+      <li><strong>Keeps connections alive</strong> &mdash; the keepalive probes also prevent firewalls and NAT gateways from dropping idle connections</li>
+    </ul>
+
+    <div class="note">
+      <div class="note-label">Why this matters</div>
+      <p>When SSH dies abruptly (network drop, lid close), the remote <code>ghostly-session attach</code> process doesn't know the connection is gone until TCP times out. With <code>ServerAliveInterval</code>, SSH actively probes the connection, so sshd on the remote detects the failure and terminates the attach process promptly. This updates the session client count from "attached" back to "detached" in Ghostly's menu.</p>
+    </div>
+  </section>
+
   <!-- Settings -->
   <section class="doc-section">
     <h2>Settings Overview</h2>

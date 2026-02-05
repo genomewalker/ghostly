@@ -46,6 +46,8 @@ Ghostly.app (macOS) ──ssh──▶ ghostly-session (daemon) ──pty──�
 - **Multi-terminal** — Ghostty, iTerm2, Terminal.app with window/tab/split modes
 - **Session persistence** — sessions survive disconnects, network changes, lid close
 - **Smart fallback** — prefers ghostly-session, falls back to tmux/screen
+- **Scrollback replay** — 128KB buffer, reattach shows recent output
+- **CLI tool** — `ghostly connect`, `ghostly sessions`, shell completions
 - **System info** — CPU load, disk usage, conda env, SLURM jobs
 - **Favorites** — pin frequently used hosts to the top
 - **Log console** — built-in console for debugging connections
@@ -62,7 +64,7 @@ ghostly/
 │   │   ├── Views/            # MenuBarView, ConsoleView, SettingsView
 │   │   ├── Services/         # SSH, GhosttyService, SessionService
 │   │   └── Helpers/          # ShellCommand, AppLog, BatteryMonitor
-│   └── ghostly-cli/          # CLI companion tool
+│   └── ghostly-cli/          # CLI companion tool (ghostly command)
 ├── ghostly-session/          # C++ remote session daemon
 │   ├── ghostly-session.cpp   # Single-file implementation
 │   └── Makefile
@@ -103,6 +105,52 @@ ghostly-session kill mywork          # terminate a session
 ```
 
 Detach key: `Ctrl+\`
+
+## CLI Tool (`ghostly`)
+
+A standalone command-line companion for terminal usage.
+
+### Install
+
+From the Ghostly Settings window, click **Install CLI**, or build from source:
+
+```bash
+cd Ghostly/ghostly-cli
+make install  # installs to /usr/local/bin
+```
+
+### Usage
+
+```bash
+ghostly connect myhost              # Connect (creates/attaches default session)
+ghostly connect myhost -s coding    # Connect to named session
+ghostly attach myhost coding        # Reattach to existing session
+ghostly ssh myhost                  # Plain SSH (no session manager)
+ghostly list                        # List all SSH hosts from config
+ghostly sessions                    # List sessions on all hosts
+ghostly sessions myhost             # List sessions on specific host
+ghostly status                      # Show connection status
+ghostly setup myhost                # Install ghostly-session on remote
+ghostly version                     # Show version info
+```
+
+### Shell Completions
+
+```bash
+eval "$(ghostly completions bash)"  # bash
+eval "$(ghostly completions zsh)"   # zsh
+```
+
+## Recommended SSH Config
+
+Add these lines to the **top** of your `~/.ssh/config` (before any `Host` blocks) so SSH detects dead connections quickly:
+
+```
+ServerAliveInterval 15
+ServerAliveCountMax 3
+```
+
+This sends a keepalive probe every 15 seconds and disconnects after 3 missed responses (~45s). Without this, a network drop (WiFi loss, laptop sleep) can leave stale "attached" sessions on the remote for minutes until TCP times out.
 
 ## Architecture
 

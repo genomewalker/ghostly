@@ -125,6 +125,11 @@
       <div class="note-label">Tip</div>
       <p>Ghostly shows the SLURM job count in the menu bar host info, so you can see how many jobs are running without connecting.</p>
     </div>
+
+    <div class="note">
+      <div class="note-label">SSH Keepalive</div>
+      <p>HPC networks can be unstable. Add <code>ServerAliveInterval 15</code> and <code>ServerAliveCountMax 3</code> to the top of your <code>~/.ssh/config</code> so SSH detects dead connections within ~45 seconds. Without this, a network drop can leave stale "attached" sessions for minutes. See the <a href="guide.html#recommended-ssh-config">Guide</a> for details.</p>
+    </div>
   </section>
 
   <!-- Conda -->

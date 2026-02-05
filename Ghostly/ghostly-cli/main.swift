@@ -3,6 +3,7 @@ import Foundation
 // Minimal CLI without ArgumentParser dependency
 // Usage: ghostly <command> [args]
 
+let ghostlyVersion = "1.2.0"
 let args = CommandLine.arguments
 let verbose = args.contains("-v") || args.contains("--verbose")
 let startTime = Date()
@@ -25,6 +26,8 @@ func printUsage() {
       ghostly sessions [host]                List sessions (all hosts if none specified)
       ghostly status                         Show connection status
       ghostly setup <host>                   Install ghostly-session on remote host
+      ghostly version                        Show version info
+      ghostly completions [bash|zsh]         Generate shell completions
 
     Options:
       -s, --session <name>    Session name (default: "default")
@@ -153,6 +156,16 @@ case "connect":
     }
 
     print("Connecting to \(host) (session: \(sessionName))...")
+
+    // Version check — warn if remote ghostly-session version differs
+    if let remoteVersion = shellOutput("ssh -o ConnectTimeout=5 -o BatchMode=yes \(host) '~/.local/bin/ghostly-session version 2>/dev/null'") {
+        let remote = remoteVersion.replacingOccurrences(of: "ghostly-session ", with: "")
+        if remote != ghostlyVersion {
+            print("Warning: version mismatch — CLI \(ghostlyVersion), remote \(remote)")
+        }
+        vlog("Remote version: \(remote)")
+    }
+
     vlog("Sending IPC notification...")
     IPCClient.notifyConnect(host: host, session: sessionName)
     vlog("IPC done. Starting SSH...")
@@ -172,6 +185,15 @@ case "attach":
     let session = args[3]
 
     print("Reattaching to \(host):\(session)...")
+
+    // Version check
+    if let remoteVersion = shellOutput("ssh -o ConnectTimeout=5 -o BatchMode=yes \(host) '~/.local/bin/ghostly-session version 2>/dev/null'") {
+        let remote = remoteVersion.replacingOccurrences(of: "ghostly-session ", with: "")
+        if remote != ghostlyVersion {
+            print("Warning: version mismatch — CLI \(ghostlyVersion), remote \(remote)")
+        }
+    }
+
     vlog("Sending IPC notification...")
     IPCClient.notifyConnect(host: host, session: session)
     vlog("IPC done. Starting SSH...")
@@ -312,6 +334,9 @@ case "setup":
         print("Failed to install ghostly-session. Ensure g++ or clang++ is available on \(host)")
         exit(1)
     }
+
+case "version", "--version":
+    print("ghostly \(ghostlyVersion)")
 
 case "-h", "--help", "help":
     printUsage()

@@ -36,6 +36,7 @@ actor RemoteInfoService {
         command -v squeue > /dev/null 2>&1 && echo "JOBS:$(squeue -u $USER -h 2>/dev/null | wc -l | tr -d ' ')" || echo "JOBS:N/A"
         command -v ghostly-session > /dev/null 2>&1 && echo "MUX:ghostly" || (command -v tmux > /dev/null 2>&1 && echo "MUX:tmux" || (command -v screen > /dev/null 2>&1 && echo "MUX:screen" || echo "MUX:none"))
         command -v ghostly-session > /dev/null 2>&1 && echo "SESSIONS:$(ghostly-session list --json 2>/dev/null | grep -o '"name"' | wc -l | tr -d ' ')" || (command -v tmux > /dev/null 2>&1 && echo "SESSIONS:$(tmux list-sessions 2>/dev/null | wc -l | tr -d ' ')" || (command -v screen > /dev/null 2>&1 && echo "SESSIONS:$(screen -ls 2>/dev/null | grep -c 'tached')" || echo "SESSIONS:0"))
+        command -v ghostly-session > /dev/null 2>&1 && echo "VERSION:$(ghostly-session version 2>/dev/null | awk '{print $2}')" || echo "VERSION:N/A"
         """
 
         do {
@@ -71,6 +72,8 @@ actor RemoteInfoService {
                 info.sessionBackend = SessionBackend(rawValue: value) ?? .none
             case "SESSIONS":
                 info.activeSessions = Int(value) ?? 0
+            case "VERSION":
+                if value != "N/A" { info.remoteVersion = value }
             default:
                 break
             }
