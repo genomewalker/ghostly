@@ -1,9 +1,17 @@
-# Ghostly
+<p align="center">
+  <img src="Ghostly/Ghostly/Assets.xcassets/AppIcon.appiconset/icon_128x128.png" alt="Ghostly" width="96">
+</p>
 
-[![Build macOS App](https://github.com/genomewalker/ghostly/actions/workflows/build-macos.yml/badge.svg)](https://github.com/genomewalker/ghostly/actions/workflows/build-macos.yml)
-[![Build ghostly-session](https://github.com/genomewalker/ghostly/actions/workflows/build-session.yml/badge.svg)](https://github.com/genomewalker/ghostly/actions/workflows/build-session.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-blue.svg)]()
+<h1 align="center">Ghostly</h1>
+
+<p align="center">
+  <a href="https://github.com/genomewalker/ghostly/actions/workflows/build-macos.yml"><img src="https://github.com/genomewalker/ghostly/actions/workflows/build-macos.yml/badge.svg" alt="Build macOS App"></a>
+  <a href="https://github.com/genomewalker/ghostly/actions/workflows/build-session.yml"><img src="https://github.com/genomewalker/ghostly/actions/workflows/build-session.yml/badge.svg" alt="Build ghostly-session"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/macOS-14%2B-blue.svg" alt="macOS 14+">
+</p>
+
+<p align="center"><strong><a href="https://genomewalker.github.io/ghostly">Documentation</a></strong></p>
 
 Persistent SSH sessions from your menu bar.
 

@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CLI Reference — Ghostly</title>
+<meta name="description" content="Complete command reference for ghostly-session — the remote session daemon.">
+<link rel="icon" type="image/png" href="icon-32.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <div class="container">
+    <a class="header-logo" href="index.html">
+      <img src="icon-32.png" alt="Ghostly" width="20" height="20" style="border-radius:4px;">
+      <span>ghostly</span>
+    </a>
+    <nav>
+      <a href="guide.html">Guide</a>
+      <a href="cli.html" class="active">CLI</a>
+      <a href="examples.html">Examples</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="https://github.com/genomewalker/ghostly">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<section class="page-hero">
+  <div class="container">
+    <div class="section-label">// reference</div>
+    <h1>CLI Reference</h1>
+    <p class="subtitle"><code>ghostly-session</code> 1.0.1 &mdash; remote session manager</p>
+  </div>
+</section>
+
+<div class="container">
+
+  <!-- Commands -->
+  <section class="doc-section">
+    <h2>Commands</h2>
+
+    <h3><code>open &lt;name&gt; [-- cmd...]</code></h3>
+    <p>Create a new session or attach to an existing one. This is the primary command &mdash; idempotent and safe to call repeatedly.</p>
+    <div class="terminal">
+      <div class="terminal-chrome">
+        <div class="terminal-dot red"></div>
+        <div class="terminal-dot yellow"></div>
+        <div class="terminal-dot green"></div>
+        <div class="terminal-title">open</div>
+      </div>
+      <div class="terminal-body">
+<span class="prompt">$ </span><span class="cmd">ghostly-session open mywork</span>
+<span class="output">creating session 'mywork'... attached (ctrl+\ to detach)</span>
+
+<span class="comment"># With a custom command:</span>
+<span class="prompt">$ </span><span class="cmd">ghostly-session open jupyter -- jupyter notebook --no-browser</span>
+      </div>
+    </div>
+
+    <h3><code>create &lt;name&gt; [-- cmd...]</code></h3>
+    <p>Create a new session. Fails if a session with that name already exists. The session daemonizes via double-fork.</p>
+    <div class="terminal">
+      <div class="terminal-chrome">
+        <div class="terminal-dot red"></div>
+        <div class="terminal-dot yellow"></div>
+        <div class="terminal-dot green"></div>
+        <div class="terminal-title">create</div>
+      </div>
+      <div class="terminal-body">
+<span class="prompt">$ </span><span class="cmd">ghostly-session create dev</span>
+<span class="output">creating session 'dev'... attached (ctrl+\ to detach)</span>
+      </div>
+    </div>
+
+    <h3><code>attach &lt;name&gt;</code></h3>
+    <p>Reattach to an existing session. Fails if the session doesn't exist. Returns the exit code of the remote command when the session ends.</p>
+    <div class="terminal">
+      <div class="terminal-chrome">
+        <div class="terminal-dot red"></div>
+        <div class="terminal-dot yellow"></div>
+        <div class="terminal-dot green"></div>
+        <div class="terminal-title">attach</div>
+      </div>
+      <div class="terminal-body">
+<span class="prompt">$ </span><span class="cmd">ghostly-session attach dev</span>
+<span class="output">attached to 'dev' (ctrl+\ to detach)</span>
+      </div>
+    </div>
+
+    <h3><code>list [--json]</code></h3>
+    <p>List all active sessions on this host. With <code>--json</code>, outputs machine-readable JSON.</p>
+    <div class="terminal">
+      <div class="terminal-chrome">
+        <div class="terminal-dot red"></div>
+        <div class="terminal-dot yellow"></div>
+        <div class="terminal-dot green"></div>
+        <div class="terminal-title">list</div>
+      </div>
+      <div class="terminal-body">
+<span class="prompt">$ </span><span class="cmd">ghostly-session list</span>
+<span class="output">  mywork    1 client   2025-02-02 18:13</span>
+<span class="output">  jupyter   0 clients  2025-02-02 19:45</span>
+
+<span class="prompt">$ </span><span class="cmd">ghostly-session list --json</span>
+<span class="output">{</span>
+<span class="output">  <span class="key">"sessions"</span>: [</span>
+<span class="output">    {</span>
+<span class="output">      <span class="key">"name"</span>: <span class="string">"mywork"</span>,</span>
+<span class="output">      <span class="key">"clients"</span>: <span class="number">1</span>,</span>
+<span class="output">      <span class="key">"created"</span>: <span class="number">1738519200</span>,</span>
+<span class="output">      <span class="key">"command"</span>: <span class="string">"bash"</span>,</span>
+<span class="output">      <span class="key">"pid"</span>: <span class="number">12345</span></span>
+<span class="output">    }</span>
+<span class="output">  ]</span>
+<span class="output">}</span>
+      </div>
+    </div>
+
+    <h4>JSON Schema: <code>list --json</code></h4>
+    <table class="ref-table">
+      <thead>
+        <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>sessions</td><td>array</td><td>Array of session objects</td></tr>
+        <tr><td>sessions[].name</td><td>string</td><td>Session name</td></tr>
+        <tr><td>sessions[].clients</td><td>number</td><td>Number of attached clients</td></tr>
+        <tr><td>sessions[].created</td><td>number</td><td>Unix timestamp of creation</td></tr>
+        <tr><td>sessions[].command</td><td>string</td><td>Command running in the session</td></tr>
+        <tr><td>sessions[].pid</td><td>number</td><td>Daemon process ID</td></tr>
+      </tbody>
+    </table>
+
+    <h3><code>info [--json]</code></h3>
+    <p>Show system information for this host: user, CPU load, disk usage, active conda environment, SLURM jobs, and session count.</p>
+    <div class="terminal">
+      <div class="terminal-chrome">
+        <div class="terminal-dot red"></div>
+        <div class="terminal-dot yellow"></div>
+        <div class="terminal-dot green"></div>
+        <div class="terminal-title">info</div>
+      </div>
+      <div class="terminal-body">
+<span class="prompt">$ </span><span class="cmd">ghostly-session info --json</span>
+<span class="output">{</span>
+<span class="output">  <span class="key">"user"</span>: <span class="string">"alice"</span>,</span>
+<span class="output">  <span class="key">"conda"</span>: <span class="string">"pytorch"</span>,</span>
+<span class="output">  <span class="key">"load"</span>: <span class="string">"2.45"</span>,</span>
+<span class="output">  <span class="key">"disk"</span>: <span class="string">"42%"</span>,</span>
+<span class="output">  <span class="key">"slurm_jobs"</span>: <span class="string">"3"</span>,</span>
+<span class="output">  <span class="key">"sessions"</span>: <span class="number">2</span>,</span>
+<span class="output">  <span class="key">"backend"</span>: <span class="string">"ghostly"</span></span>
+<span class="output">}</span>
+      </div>
+    </div>
+
+    <h4>JSON Schema: <code>info --json</code></h4>
+    <table class="ref-table">
+      <thead>
+        <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>user</td><td>string</td><td>Current username</td></tr>
+        <tr><td>conda</td><td>string</td><td>Active conda environment (empty if none)</td></tr>
+        <tr><td>load</td><td>string</td><td>1-minute load average</td></tr>
+        <tr><td>disk</td><td>string</td><td>Disk usage percentage of home filesystem</td></tr>
+        <tr><td>slurm_jobs</td><td>string</td><td>Number of SLURM jobs (empty if no SLURM)</td></tr>
+        <tr><td>sessions</td><td>number</td><td>Number of active ghostly sessions</td></tr>
+        <tr><td>backend</td><td>string</td><td>Always <code>"ghostly"</code></td></tr>
+      </tbody>
+    </table>
+
+    <h3><code>kill &lt;name&gt;</code></h3>
+    <p>Terminate a session. Sends SIGTERM to the daemon, then SIGKILL if it doesn't exit.</p>
+    <div class="terminal">
+      <div class="terminal-chrome">
+        <div class="terminal-dot red"></div>
+        <div class="terminal-dot yellow"></div>
+        <div class="terminal-dot green"></div>
+        <div class="terminal-title">kill</div>
+      </div>
+      <div class="terminal-body">
+<span class="prompt">$ </span><span class="cmd">ghostly-session kill jupyter</span>
+      </div>
+    </div>
+
+    <h3><code>version</code></h3>
+    <p>Print the version number. Also available as <code>--version</code> or <code>-v</code>.</p>
+
+    <h3><code>help</code></h3>
+    <p>Print usage information. Also available as <code>--help</code> or <code>-h</code>.</p>
+  </section>
+
+  <!-- Session Names -->
+  <section class="doc-section">
+    <h2>Session Names</h2>
+    <p>Session names must be alphanumeric, with dashes, underscores, and dots allowed. Maximum length is 64 characters. No path separators or special characters.</p>
+    <p>Valid: <code>mywork</code>, <code>dev-server</code>, <code>project.v2</code>, <code>user_session_01</code></p>
+    <p>Invalid: <code>../escape</code>, <code>my session</code>, <code>a/b</code></p>
+  </section>
+
+  <!-- Detach Key -->
+  <section class="doc-section">
+    <h2>Detach Key</h2>
+    <p>Press <kbd>Ctrl</kbd>+<kbd>\</kbd> (0x1C) to detach from a session. The session continues running in the background. Reattach at any time with <code>ghostly-session attach &lt;name&gt;</code> or <code>open</code>.</p>
+  </section>
+
+  <!-- Exit Codes -->
+  <section class="doc-section">
+    <h2>Exit Codes</h2>
+    <table class="ref-table">
+      <thead>
+        <tr><th>Code</th><th>Meaning</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>0</td><td>Success (or session exited normally)</td></tr>
+        <tr><td>1</td><td>Generic error (invalid args, session not found, etc.)</td></tr>
+        <tr><td><em>N</em></td><td>Child process exit code (when attached)</td></tr>
+        <tr><td>128+<em>S</em></td><td>Child killed by signal <em>S</em></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- install.sh -->
+  <section class="doc-section">
+    <h2>install.sh</h2>
+    <p>The installer script automates downloading, compiling, and installing <code>ghostly-session</code>.</p>
+
+    <table class="ref-table">
+      <thead>
+        <tr><th>Flag</th><th>Default</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>--version TAG</td><td>latest (main)</td><td>Install a specific release tag</td></tr>
+        <tr><td>--prefix DIR</td><td>~/.local/bin</td><td>Installation directory</td></tr>
+        <tr><td>--help, -h</td><td>&mdash;</td><td>Print help and exit</td></tr>
+      </tbody>
+    </table>
+
+    <p>The script auto-detects your C++ compiler (<code>g++</code>, <code>clang++</code>, or <code>c++</code>), adds <code>-lutil</code> on Linux, and updates your shell PATH if needed (<code>.bashrc</code>, <code>.zshrc</code>, or <code>config.fish</code>).</p>
+  </section>
+
+</div>
+
+<footer>
+  <div class="container">
+    <div class="footer-links">
+      <a href="index.html">home</a>
+      <a href="https://github.com/genomewalker/ghostly">source</a>
+      <a href="https://github.com/genomewalker/ghostly/issues">issues</a>
+    </div>
+    <div class="footer-credits">
+      ghostly &mdash; persistent ssh sessions from your menu bar
+    </div>
+  </div>
+</footer>
+
+<script>
+const observer = new IntersectionObserver(
+  (entries) => entries.forEach((e) => { if (e.isIntersecting) e.target.classList.add('visible'); }),
+  { threshold: 0.1, rootMargin: '0px 0px -40px 0px' }
+);
+document.querySelectorAll('.fade-in').forEach((el) => observer.observe(el));
+</script>
+
+</body>
+</html>

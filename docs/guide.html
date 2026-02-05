@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Getting Started — Ghostly</title>
+<meta name="description" content="Getting started guide for Ghostly — installation, first connection, managing hosts, terminal modes, and settings.">
+<link rel="icon" type="image/png" href="icon-32.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <div class="container">
+    <a class="header-logo" href="index.html">
+      <img src="icon-32.png" alt="Ghostly" width="20" height="20" style="border-radius:4px;">
+      <span>ghostly</span>
+    </a>
+    <nav>
+      <a href="guide.html" class="active">Guide</a>
+      <a href="cli.html">CLI</a>
+      <a href="examples.html">Examples</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="https://github.com/genomewalker/ghostly">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<section class="page-hero">
+  <div class="container">
+    <div class="section-label">// getting started</div>
+    <h1>Guide</h1>
+    <p class="subtitle">From install to your first persistent session in under five minutes.</p>
+  </div>
+</section>
+
+<div class="container">
+
+  <!-- Installation -->
+  <section class="doc-section">
+    <h2>Installation</h2>
+
+    <h3>macOS App</h3>
+    <p>Download the latest <code>Ghostly.app</code> from <a href="https://github.com/genomewalker/ghostly/releases">GitHub Releases</a> and drag it to your Applications folder. Ghostly lives in your menu bar &mdash; look for the ghost icon after launch.</p>
+
+    <p>Or build from source:</p>
+    <div class="terminal">
+      <div class="terminal-chrome">
+        <div class="terminal-dot red"></div>
+        <div class="terminal-dot yellow"></div>
+        <div class="terminal-dot green"></div>
+        <div class="terminal-title">build</div>
+      </div>
+      <div class="terminal-body">
+<span class="prompt">$ </span><span class="cmd">xcodebuild -project Ghostly/Ghostly.xcodeproj -scheme Ghostly build</span>
+      </div>
+    </div>
+
+    <h3>Remote: ghostly-session</h3>
+    <p>On each remote host you want to manage, install <code>ghostly-session</code>. The one-liner downloads, compiles, and installs it:</p>
+    <div class="terminal">
+      <div class="terminal-chrome">
+        <div class="terminal-dot red"></div>
+        <div class="terminal-dot yellow"></div>
+        <div class="terminal-dot green"></div>
+        <div class="terminal-title">remote host</div>
+      </div>
+      <div class="terminal-body">
+<span class="prompt">$ </span><span class="cmd">curl -sSL https://raw.githubusercontent.com/genomewalker/ghostly/main/install.sh | bash</span>
+<span class="output">Downloading ghostly-session.cpp...</span>
+<span class="output">Compiling with g++ -O2 -std=c++11...</span>
+<span class="output">Installing to /home/you/.local/bin/ghostly-session</span>
+<span class="output">ghostly-session 1.0.1 installed successfully</span>
+      </div>
+    </div>
+
+    <div class="note">
+      <div class="note-label">Requirements</div>
+      <p>A C++ compiler: <code>g++</code> 4.8+ or <code>clang++</code>. No other dependencies. Works on Linux and macOS. The binary is ~80KB.</p>
+    </div>
+
+    <p>Custom install options:</p>
+    <div class="terminal">
+      <div class="terminal-chrome">
+        <div class="terminal-dot red"></div>
+        <div class="terminal-dot yellow"></div>
+        <div class="terminal-dot green"></div>
+        <div class="terminal-title">custom install</div>
+      </div>
+      <div class="terminal-body">
+<span class="prompt">$ </span><span class="cmd">bash install.sh --prefix /usr/local/bin</span>
+<span class="prompt">$ </span><span class="cmd">bash install.sh --version v1.0.0</span>
+      </div>
+    </div>
+
+    <h3>Auto-install</h3>
+    <p>Ghostly can also install <code>ghostly-session</code> automatically when you first connect to a host. Go to <strong>Settings &gt; General</strong> and enable auto-install. The app will compile the binary on the remote host via SSH the first time you connect.</p>
+  </section>
+
+  <!-- First Connection -->
+  <section class="doc-section">
+    <h2>First Connection</h2>
+
+    <p>Ghostly reads your SSH config (<code>~/.ssh/config</code>) and discovers all your hosts automatically. Here's a step-by-step walkthrough:</p>
+
+    <ol class="steps">
+      <li>
+        <strong>Click the ghost icon</strong> in your menu bar. You'll see a list of all SSH hosts from your config, grouped by managed hosts (with ghostly-session) and other hosts.
+      </li>
+      <li>
+        <strong>Click a host name</strong> to connect. Ghostly opens your preferred terminal with an SSH command that attaches to a persistent session via <code>ghostly-session open</code>.
+      </li>
+      <li>
+        <strong>Work in your session</strong>. Close your laptop, switch networks, whatever &mdash; the remote session keeps running. The daemon persists until you explicitly exit or kill it.
+      </li>
+      <li>
+        <strong>Reattach anytime</strong> by clicking the same host. Ghostly detects the running session and reattaches automatically.
+      </li>
+      <li>
+        <strong>Detach</strong> by pressing <kbd>Ctrl</kbd>+<kbd>\</kbd>. This disconnects your terminal but leaves the session alive on the remote host.
+      </li>
+    </ol>
+  </section>
+
+  <!-- Managing Hosts -->
+  <section class="doc-section">
+    <h2>Managing Hosts</h2>
+
+    <h3>Favorites</h3>
+    <p>Right-click any host and select <strong>Add to Favorites</strong> to pin it to the top of the menu. Favorites appear in a dedicated section for quick access.</p>
+
+    <h3>Managed Hosts</h3>
+    <p>Hosts where <code>ghostly-session</code> is installed show additional info: active sessions, CPU load, disk usage, conda environment, and SLURM job count. This info refreshes automatically when you open the menu.</p>
+
+    <h3>Search</h3>
+    <p>With many hosts, use the search bar at the top of the menu to filter by hostname. It matches against your SSH config aliases.</p>
+  </section>
+
+  <!-- Terminal Modes -->
+  <section class="doc-section">
+    <h2>Terminal Modes</h2>
+
+    <p>Ghostly supports three ways to open sessions, across three different terminal emulators:</p>
+
+    <table class="ref-table">
+      <thead>
+        <tr>
+          <th>Mode</th>
+          <th>Trigger</th>
+          <th>Behavior</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>New Window</td>
+          <td>Click</td>
+          <td>Opens in a new terminal window (default)</td>
+        </tr>
+        <tr>
+          <td>New Tab</td>
+          <td><kbd>Option</kbd>+Click</td>
+          <td>Opens in a new tab in the frontmost terminal</td>
+        </tr>
+        <tr>
+          <td>Split Pane</td>
+          <td><kbd>Shift</kbd>+Click</td>
+          <td>Splits the current pane (iTerm2/Ghostty)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>You can also set the default mode using the three icons in the menu bar header, or in Settings.</p>
+
+    <h3>Supported Terminals</h3>
+    <ul>
+      <li><strong>Ghostty</strong> &mdash; full support for window, tab, and split modes via System Events keystrokes</li>
+      <li><strong>iTerm2</strong> &mdash; full support via native AppleScript dictionary</li>
+      <li><strong>Terminal.app</strong> &mdash; supports window and tab modes (split falls back to new tab)</li>
+    </ul>
+
+    <p>Set your preferred terminal in <strong>Settings &gt; Terminal</strong>, or leave it on <strong>Auto</strong> to let Ghostly detect the best option.</p>
+  </section>
+
+  <!-- Settings -->
+  <section class="doc-section">
+    <h2>Settings Overview</h2>
+
+    <p>Access settings from the ghost menu &gt; gear icon, or <kbd>Cmd</kbd>+<kbd>,</kbd> from the menu bar popover.</p>
+
+    <ul>
+      <li><strong>General</strong> &mdash; Auto-install ghostly-session, launch at login, refresh interval</li>
+      <li><strong>Terminal</strong> &mdash; Preferred terminal app, default open mode (window/tab/split)</li>
+      <li><strong>Hosts</strong> &mdash; Manage favorites, configure per-host session names</li>
+    </ul>
+  </section>
+
+</div>
+
+<footer>
+  <div class="container">
+    <div class="footer-links">
+      <a href="index.html">home</a>
+      <a href="https://github.com/genomewalker/ghostly">source</a>
+      <a href="https://github.com/genomewalker/ghostly/issues">issues</a>
+    </div>
+    <div class="footer-credits">
+      ghostly &mdash; persistent ssh sessions from your menu bar
+    </div>
+  </div>
+</footer>
+
+<script>
+const observer = new IntersectionObserver(
+  (entries) => entries.forEach((e) => { if (e.isIntersecting) e.target.classList.add('visible'); }),
+  { threshold: 0.1, rootMargin: '0px 0px -40px 0px' }
+);
+document.querySelectorAll('.fade-in').forEach((el) => observer.observe(el));
+</script>
+
+</body>
+</html>

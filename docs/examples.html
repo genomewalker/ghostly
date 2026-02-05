@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Examples &amp; Workflows — Ghostly</title>
+<meta name="description" content="Practical examples and workflows for Ghostly — from basic sessions to HPC clusters and scripting.">
+<link rel="icon" type="image/png" href="icon-32.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <div class="container">
+    <a class="header-logo" href="index.html">
+      <img src="icon-32.png" alt="Ghostly" width="20" height="20" style="border-radius:4px;">
+      <span>ghostly</span>
+    </a>
+    <nav>
+      <a href="guide.html">Guide</a>
+      <a href="cli.html">CLI</a>
+      <a href="examples.html" class="active">Examples</a>
+      <a href="architecture.html">Architecture</a>
+      <a href="https://github.com/genomewalker/ghostly">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<section class="page-hero">
+  <div class="container">
+    <div class="section-label">// examples</div>
+    <h1>Examples &amp; Workflows</h1>
+    <p class="subtitle">Practical patterns for using Ghostly in the real world.</p>
+  </div>
+</section>
+
+<div class="container">
+
+  <!-- Basic -->
+  <section class="doc-section">
+    <h2>Basic: Create, Detach, Reattach</h2>
+    <p>The most common workflow &mdash; start a session, do some work, detach, then come back later.</p>
+    <div class="terminal">
+      <div class="terminal-chrome">
+        <div class="terminal-dot red"></div>
+        <div class="terminal-dot yellow"></div>
+        <div class="terminal-dot green"></div>
+        <div class="terminal-title">basic workflow</div>
+      </div>
+      <div class="terminal-body">
+<span class="comment"># Create a session (or reattach if it already exists)</span>
+<span class="prompt">$ </span><span class="cmd">ghostly-session open mywork</span>
+<span class="output">creating session 'mywork'... attached (ctrl+\ to detach)</span>
+
+<span class="comment"># Do your work...</span>
+<span class="prompt">mywork $ </span><span class="cmd">python train.py --epochs 100</span>
+
+<span class="comment"># Detach with Ctrl+\ — training keeps running</span>
+<span class="output">[detached from 'mywork']</span>
+
+<span class="comment"># Later, come back and reattach</span>
+<span class="prompt">$ </span><span class="cmd">ghostly-session open mywork</span>
+<span class="output">attached to 'mywork' (ctrl+\ to detach)</span>
+
+<span class="comment"># Or just click the host in Ghostly.app's menu bar</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Multi-host -->
+  <section class="doc-section">
+    <h2>Multi-host: Managing Sessions Across Servers</h2>
+    <p>When you work across multiple machines, Ghostly shows all your sessions in one place. Each host gets its own session namespace.</p>
+    <div class="terminal">
+      <div class="terminal-chrome">
+        <div class="terminal-dot red"></div>
+        <div class="terminal-dot yellow"></div>
+        <div class="terminal-dot green"></div>
+        <div class="terminal-title">multi-host</div>
+      </div>
+      <div class="terminal-body">
+<span class="comment"># On gpu-server:</span>
+<span class="prompt">gpu$ </span><span class="cmd">ghostly-session open training</span>
+
+<span class="comment"># On data-server:</span>
+<span class="prompt">data$ </span><span class="cmd">ghostly-session open etl-pipeline</span>
+
+<span class="comment"># On web-server:</span>
+<span class="prompt">web$ </span><span class="cmd">ghostly-session open deploy</span>
+
+<span class="comment"># All three show up in Ghostly.app's menu — click any to reattach</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- HPC/SLURM -->
+  <section class="doc-section">
+    <h2>HPC/SLURM: Persistent Sessions on Clusters</h2>
+    <p>On HPC clusters, <code>ghostly-session</code> is particularly useful because login nodes are shared and connections can be unstable. Sessions persist through network interruptions, and Ghostly shows your SLURM job count.</p>
+    <div class="terminal">
+      <div class="terminal-chrome">
+        <div class="terminal-dot red"></div>
+        <div class="terminal-dot yellow"></div>
+        <div class="terminal-dot green"></div>
+        <div class="terminal-title">hpc cluster</div>
+      </div>
+      <div class="terminal-body">
+<span class="comment"># Install on the login node (even old GCC 4.8 works)</span>
+<span class="prompt">login01$ </span><span class="cmd">curl -sSL https://raw.githubusercontent.com/genomewalker/ghostly/main/install.sh | bash</span>
+
+<span class="comment"># Create a persistent session for job management</span>
+<span class="prompt">login01$ </span><span class="cmd">ghostly-session open slurm-mgr</span>
+
+<span class="comment"># Submit and monitor jobs — session survives disconnects</span>
+<span class="prompt">slurm-mgr $ </span><span class="cmd">sbatch big_job.sh</span>
+<span class="output">Submitted batch job 123456</span>
+<span class="prompt">slurm-mgr $ </span><span class="cmd">squeue -u $USER</span>
+
+<span class="comment"># Check system info to see SLURM job count</span>
+<span class="prompt">$ </span><span class="cmd">ghostly-session info --json</span>
+<span class="output">{<span class="key">"user"</span>:<span class="string">"alice"</span>,<span class="key">"slurm_jobs"</span>:<span class="string">"5"</span>,<span class="key">"load"</span>:<span class="string">"12.3"</span>,...}</span>
+      </div>
+    </div>
+    <div class="note">
+      <div class="note-label">Tip</div>
+      <p>Ghostly shows the SLURM job count in the menu bar host info, so you can see how many jobs are running without connecting.</p>
+    </div>
+  </section>
+
+  <!-- Conda -->
+  <section class="doc-section">
+    <h2>Conda Environments</h2>
+    <p>Ghostly detects the active conda environment and displays it in the host info. Your session inherits whichever conda env is active when the session is created.</p>
+    <div class="terminal">
+      <div class="terminal-chrome">
+        <div class="terminal-dot red"></div>
+        <div class="terminal-dot yellow"></div>
+        <div class="terminal-dot green"></div>
+        <div class="terminal-title">conda</div>
+      </div>
+      <div class="terminal-body">
+<span class="comment"># The session's login shell picks up your conda init</span>
+<span class="prompt">$ </span><span class="cmd">ghostly-session open ml-dev</span>
+<span class="prompt">(base) ml-dev $ </span><span class="cmd">conda activate pytorch</span>
+<span class="prompt">(pytorch) ml-dev $ </span><span class="cmd">python -c "import torch; print(torch.cuda.is_available())"</span>
+<span class="output">True</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Custom Commands -->
+  <section class="doc-section">
+    <h2>Custom Commands</h2>
+    <p>Pass <code>-- cmd...</code> after the session name to run a specific command instead of a login shell. The session exits when the command finishes.</p>
+    <div class="terminal">
+      <div class="terminal-chrome">
+        <div class="terminal-dot red"></div>
+        <div class="terminal-dot yellow"></div>
+        <div class="terminal-dot green"></div>
+        <div class="terminal-title">custom commands</div>
+      </div>
+      <div class="terminal-body">
+<span class="comment"># Jupyter notebook server</span>
+<span class="prompt">$ </span><span class="cmd">ghostly-session open jupyter -- jupyter notebook --no-browser --port 8888</span>
+
+<span class="comment"># Long-running data pipeline</span>
+<span class="prompt">$ </span><span class="cmd">ghostly-session open pipeline -- bash run_pipeline.sh</span>
+
+<span class="comment"># Monitoring dashboard</span>
+<span class="prompt">$ </span><span class="cmd">ghostly-session open htop -- htop</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Multiple Clients -->
+  <section class="doc-section">
+    <h2>Multiple Clients: Collaborative Attach</h2>
+    <p>Up to 16 clients can attach to the same session simultaneously. Everyone sees the same terminal output in real time. This is useful for pair programming or live debugging.</p>
+    <div class="terminal">
+      <div class="terminal-chrome">
+        <div class="terminal-dot red"></div>
+        <div class="terminal-dot yellow"></div>
+        <div class="terminal-dot green"></div>
+        <div class="terminal-title">multi-attach</div>
+      </div>
+      <div class="terminal-body">
+<span class="comment"># Alice starts a session:</span>
+<span class="prompt">alice$ </span><span class="cmd">ghostly-session open debug</span>
+
+<span class="comment"># Bob attaches to the same session (from another SSH connection):</span>
+<span class="prompt">bob$ </span><span class="cmd">ghostly-session attach debug</span>
+
+<span class="comment"># Both see the same terminal — input from either user is shared</span>
+<span class="comment"># The client count shows 2:</span>
+<span class="prompt">$ </span><span class="cmd">ghostly-session list</span>
+<span class="output">  debug   2 clients  2025-02-02 20:00</span>
+      </div>
+    </div>
+    <div class="note">
+      <div class="note-label">Note</div>
+      <p>Window resize propagates to the smallest attached terminal via SIGWINCH, so both users get a consistent view.</p>
+    </div>
+  </section>
+
+  <!-- Scripting -->
+  <section class="doc-section">
+    <h2>Scripting with JSON Output</h2>
+    <p>The <code>--json</code> flag on <code>list</code> and <code>info</code> makes it easy to integrate <code>ghostly-session</code> into scripts and automation.</p>
+    <div class="terminal">
+      <div class="terminal-chrome">
+        <div class="terminal-dot red"></div>
+        <div class="terminal-dot yellow"></div>
+        <div class="terminal-dot green"></div>
+        <div class="terminal-title">scripting</div>
+      </div>
+      <div class="terminal-body">
+<span class="comment"># Count active sessions</span>
+<span class="prompt">$ </span><span class="cmd">ghostly-session list --json | jq '.sessions | length'</span>
+<span class="output">3</span>
+
+<span class="comment"># Get names of all sessions</span>
+<span class="prompt">$ </span><span class="cmd">ghostly-session list --json | jq -r '.sessions[].name'</span>
+<span class="output">mywork</span>
+<span class="output">jupyter</span>
+<span class="output">pipeline</span>
+
+<span class="comment"># Check disk usage</span>
+<span class="prompt">$ </span><span class="cmd">ghostly-session info --json | jq -r '.disk'</span>
+<span class="output">67%</span>
+
+<span class="comment"># Kill all sessions with no attached clients</span>
+<span class="prompt">$ </span><span class="cmd">ghostly-session list --json | jq -r '.sessions[] | select(.clients==0) | .name' | \</span>
+<span class="cmd">  xargs -I{} ghostly-session kill {}</span>
+
+<span class="comment"># Health check script</span>
+<span class="prompt">$ </span><span class="cmd">if ghostly-session info --json | jq -e '.load | tonumber > 10' > /dev/null; then</span>
+<span class="cmd">    echo "High load warning!"</span>
+<span class="cmd">  fi</span>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <div class="container">
+    <div class="footer-links">
+      <a href="index.html">home</a>
+      <a href="https://github.com/genomewalker/ghostly">source</a>
+      <a href="https://github.com/genomewalker/ghostly/issues">issues</a>
+    </div>
+    <div class="footer-credits">
+      ghostly &mdash; persistent ssh sessions from your menu bar
+    </div>
+  </div>
+</footer>
+
+<script>
+const observer = new IntersectionObserver(
+  (entries) => entries.forEach((e) => { if (e.isIntersecting) e.target.classList.add('visible'); }),
+  { threshold: 0.1, rootMargin: '0px 0px -40px 0px' }
+);
+document.querySelectorAll('.fade-in').forEach((el) => observer.observe(el));
+</script>
+
+</body>
+</html>

@@ -12,6 +12,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstdint>
 #include <cstring>
 #include <cerrno>
 #include <csignal>

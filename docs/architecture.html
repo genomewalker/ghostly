@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Architecture — Ghostly</title>
+<meta name="description" content="Deep dive into ghostly-session architecture — wire protocol, event loop, daemon lifecycle, and multi-attach.">
+<link rel="icon" type="image/png" href="icon-32.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <div class="container">
+    <a class="header-logo" href="index.html">
+      <img src="icon-32.png" alt="Ghostly" width="20" height="20" style="border-radius:4px;">
+      <span>ghostly</span>
+    </a>
+    <nav>
+      <a href="guide.html">Guide</a>
+      <a href="cli.html">CLI</a>
+      <a href="examples.html">Examples</a>
+      <a href="architecture.html" class="active">Architecture</a>
+      <a href="https://github.com/genomewalker/ghostly">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<section class="page-hero">
+  <div class="container">
+    <div class="section-label">// internals</div>
+    <h1>Architecture</h1>
+    <p class="subtitle">How ghostly-session works under the hood.</p>
+  </div>
+</section>
+
+<div class="container">
+
+  <!-- Overview -->
+  <section class="doc-section">
+    <h2>Overview</h2>
+    <p><code>ghostly-session</code> is a single-file C++ daemon that manages persistent terminal sessions via Unix domain sockets. It uses a simple framed protocol to multiplex terminal I/O between a PTY and up to 16 simultaneous clients.</p>
+
+    <div class="arch-diagram">
+      <div class="arch-flow">
+        <div class="arch-node">Ghostly.app</div>
+        <div class="arch-arrow">&rarr; ssh &rarr;</div>
+        <div class="arch-node highlight">ghostly-session</div>
+        <div class="arch-arrow">&rarr; pty &rarr;</div>
+        <div class="arch-node">bash -l</div>
+      </div>
+    </div>
+
+    <p>The daemon sits between SSH and the shell. When a client connects via SSH, <code>ghostly-session</code> either creates a new PTY session or reattaches to an existing one. The session outlives the SSH connection &mdash; it persists until the child process exits or the session is explicitly killed.</p>
+  </section>
+
+  <!-- Wire Protocol -->
+  <section class="doc-section">
+    <h2>Wire Protocol</h2>
+    <p>Communication between clients and the daemon uses a simple 5-byte framed protocol over Unix domain sockets.</p>
+
+    <h3>Frame Format</h3>
+    <div class="byte-diagram">
+      <div class="byte-cell">
+        <div class="byte-label">Byte 0</div>
+        <div class="byte-value">Type</div>
+      </div>
+      <div class="byte-cell">
+        <div class="byte-label">Bytes 1-4</div>
+        <div class="byte-value">Length</div>
+      </div>
+      <div class="byte-cell payload">
+        <div class="byte-label">Bytes 5+</div>
+        <div class="byte-value">Payload</div>
+      </div>
+    </div>
+
+    <ul>
+      <li><strong>Type</strong> (1 byte): Message type identifier</li>
+      <li><strong>Length</strong> (4 bytes, big-endian): Payload length in bytes</li>
+      <li><strong>Payload</strong> (variable): Up to 1 MB (sanity limit)</li>
+    </ul>
+
+    <h3>Message Types</h3>
+    <table class="ref-table">
+      <thead>
+        <tr><th>Type</th><th>Value</th><th>Payload</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>DATA</td>
+          <td>0x01</td>
+          <td>Terminal bytes</td>
+          <td>Terminal I/O data (stdin from client, stdout from PTY)</td>
+        </tr>
+        <tr>
+          <td>WINCH</td>
+          <td>0x02</td>
+          <td>4 bytes: cols_hi, cols_lo, rows_hi, rows_lo</td>
+          <td>Window size change notification</td>
+        </tr>
+        <tr>
+          <td>DETACH</td>
+          <td>0x03</td>
+          <td>(empty)</td>
+          <td>Client requests detach</td>
+        </tr>
+        <tr>
+          <td>EXIT</td>
+          <td>0x04</td>
+          <td>1 byte: exit code</td>
+          <td>Session has exited</td>
+        </tr>
+        <tr>
+          <td>HELLO</td>
+          <td>0x05</td>
+          <td>4 bytes: initial window size</td>
+          <td>Client handshake on connect</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Connection Handshake</h3>
+    <p>When a client connects, it sends a HELLO message with the current terminal dimensions (4 bytes). The daemon has a 2-second timeout for this handshake. If the HELLO doesn't arrive in time, the client is disconnected.</p>
+  </section>
+
+  <!-- Event Loop -->
+  <section class="doc-section">
+    <h2>Event Loop</h2>
+    <p>The daemon uses a single-threaded event loop based on <code>poll()</code>. No threads, no locks, no polling intervals &mdash; purely event-driven.</p>
+
+    <div class="terminal">
+      <div class="terminal-chrome">
+        <div class="terminal-dot red"></div>
+        <div class="terminal-dot yellow"></div>
+        <div class="terminal-dot green"></div>
+        <div class="terminal-title">event loop</div>
+      </div>
+      <div class="terminal-body">
+<span class="output">poll() monitors:</span>
+<span class="output">  &bull; Listen socket     &rarr; accept new client connections</span>
+<span class="output">  &bull; PTY master fd     &rarr; read child output, broadcast to all clients</span>
+<span class="output">  &bull; Client sockets    &rarr; read client input, forward to PTY</span>
+<span class="output">  &bull; Signal pipe        &rarr; handle SIGCHLD (child exit)</span>
+      </div>
+    </div>
+
+    <p>Data flow is symmetric:</p>
+    <ul>
+      <li><strong>PTY &rarr; clients</strong>: Output from the child process is read from the PTY master and broadcast to all connected clients as DATA messages.</li>
+      <li><strong>Client &rarr; PTY</strong>: Input from any client is forwarded to the PTY master, which delivers it to the child process.</li>
+      <li><strong>WINCH</strong>: When a client sends a window size change, the daemon updates the PTY dimensions via <code>ioctl(TIOCSWINSZ)</code> and sends SIGWINCH to the child.</li>
+    </ul>
+
+    <p>Client timeout is 30 seconds &mdash; if a connected client sends no data for 30 seconds, it's considered dead and disconnected.</p>
+  </section>
+
+  <!-- Daemon Lifecycle -->
+  <section class="doc-section">
+    <h2>Daemon Lifecycle</h2>
+    <p>When a new session is created, <code>ghostly-session</code> daemonizes via the classic double-fork pattern:</p>
+
+    <ol class="steps">
+      <li><strong>First fork</strong> &mdash; parent exits, child becomes orphan adopted by init</li>
+      <li><strong>setsid()</strong> &mdash; creates a new session, detaches from controlling terminal</li>
+      <li><strong>Second fork</strong> &mdash; ensures the daemon can never reacquire a controlling terminal</li>
+      <li><strong>PTY allocation</strong> &mdash; <code>forkpty()</code> creates a new pseudo-terminal and forks the child process</li>
+      <li><strong>Socket creation</strong> &mdash; listen socket at <code>/tmp/ghostly-&lt;UID&gt;/&lt;name&gt;.sock</code> (mode 0600)</li>
+      <li><strong>Event loop</strong> &mdash; <code>poll()</code> loop runs until the child exits and all clients disconnect</li>
+    </ol>
+
+    <h3>File Layout</h3>
+    <table class="ref-table">
+      <thead>
+        <tr><th>Path</th><th>Purpose</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>/tmp/ghostly-&lt;UID&gt;/</td><td>Socket directory (mode 0700, owned by user)</td></tr>
+        <tr><td>/tmp/ghostly-&lt;UID&gt;/&lt;name&gt;.sock</td><td>Unix domain socket (mode 0600)</td></tr>
+        <tr><td>/tmp/ghostly-&lt;UID&gt;/&lt;name&gt;.pid</td><td>Daemon PID file</td></tr>
+        <tr><td>/tmp/ghostly-&lt;UID&gt;/&lt;name&gt;.info</td><td>Session metadata (pid, clients, created, cmd)</td></tr>
+      </tbody>
+    </table>
+
+    <div class="note">
+      <div class="note-label">Security</div>
+      <p>The socket directory must be a real directory (not a symlink), owned by the current user, with mode 0700. Socket path length is limited by <code>sockaddr_un.sun_path</code> (~108 bytes). Using <code>/tmp</code> ensures NFS-safe operation and automatic cleanup on reboot.</p>
+    </div>
+  </section>
+
+  <!-- Multi-attach -->
+  <section class="doc-section">
+    <h2>Multi-attach</h2>
+    <p>Each session supports up to 16 simultaneous client connections. All clients share the same PTY:</p>
+    <ul>
+      <li>PTY output is broadcast to all connected clients</li>
+      <li>Input from any client is forwarded to the PTY</li>
+      <li>Window resize uses the smallest dimensions among all clients</li>
+      <li>When a client detaches, other clients are unaffected</li>
+      <li>The session persists until the child process exits, regardless of how many clients are connected</li>
+    </ul>
+  </section>
+
+  <!-- Session Backend Fallback -->
+  <section class="doc-section">
+    <h2>Session Backend Fallback</h2>
+    <p>Ghostly.app checks each host for available session backends and uses the best one available:</p>
+
+    <table class="ref-table">
+      <thead>
+        <tr><th>Priority</th><th>Backend</th><th>Detection</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>1 (preferred)</td><td>ghostly-session</td><td>Binary exists at <code>~/.local/bin/ghostly-session</code></td></tr>
+        <tr><td>2</td><td>tmux</td><td><code>which tmux</code> succeeds</td></tr>
+        <tr><td>3</td><td>screen</td><td><code>which screen</code> succeeds</td></tr>
+        <tr><td>4 (fallback)</td><td>Plain SSH</td><td>Always available</td></tr>
+      </tbody>
+    </table>
+
+    <p>With auto-install enabled, Ghostly can promote a host from fallback to ghostly-session automatically by compiling the binary on the remote host via SSH.</p>
+  </section>
+
+  <!-- Comparison -->
+  <section class="doc-section">
+    <h2>Comparison: ghostly-session vs tmux vs screen</h2>
+
+    <div class="comparison">
+      <table>
+        <thead>
+          <tr>
+            <th>Feature</th>
+            <th>ghostly-session</th>
+            <th>tmux</th>
+            <th>screen</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="highlight-row">
+            <td>Dependencies</td>
+            <td class="yes">None (single C++ file)</td>
+            <td class="no">libevent, ncurses</td>
+            <td class="no">ncurses, PAM</td>
+          </tr>
+          <tr class="highlight-row">
+            <td>Auto-install via SSH</td>
+            <td class="yes">&#10003;</td>
+            <td class="no">&mdash;</td>
+            <td class="no">&mdash;</td>
+          </tr>
+          <tr class="highlight-row">
+            <td>JSON API</td>
+            <td class="yes">&#10003;</td>
+            <td class="no">&mdash;</td>
+            <td class="no">&mdash;</td>
+          </tr>
+          <tr class="highlight-row">
+            <td>System info (load, disk, SLURM)</td>
+            <td class="yes">&#10003;</td>
+            <td class="no">&mdash;</td>
+            <td class="no">&mdash;</td>
+          </tr>
+          <tr>
+            <td>Multi-attach</td>
+            <td class="yes">&#10003; (16 clients)</td>
+            <td class="yes">&#10003;</td>
+            <td class="yes">&#10003;</td>
+          </tr>
+          <tr>
+            <td>Single binary</td>
+            <td class="yes">&#10003; (~80KB)</td>
+            <td class="no">&mdash;</td>
+            <td class="no">&mdash;</td>
+          </tr>
+          <tr>
+            <td>Window management</td>
+            <td class="no">Single window</td>
+            <td class="yes">Panes, windows, sessions</td>
+            <td class="yes">Windows, regions</td>
+          </tr>
+          <tr>
+            <td>Scrollback buffer</td>
+            <td class="no">Terminal handles it</td>
+            <td class="yes">Built-in</td>
+            <td class="yes">Built-in</td>
+          </tr>
+          <tr>
+            <td>Configuration</td>
+            <td class="yes">Zero config</td>
+            <td class="no">.tmux.conf</td>
+            <td class="no">.screenrc</td>
+          </tr>
+          <tr>
+            <td>Compiler requirement</td>
+            <td class="no">C++11 (GCC 4.8+)</td>
+            <td class="yes">Pre-built packages</td>
+            <td class="yes">Pre-built packages</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p style="margin-top: 24px;">ghostly-session is designed for a different use case than tmux/screen. It doesn't try to be a terminal multiplexer &mdash; it's a session persistence daemon with a clean API. Your terminal emulator (Ghostty, iTerm2) handles tabs, panes, and scrollback. ghostly-session just keeps your shell alive.</p>
+  </section>
+
+</div>
+
+<footer>
+  <div class="container">
+    <div class="footer-links">
+      <a href="index.html">home</a>
+      <a href="https://github.com/genomewalker/ghostly">source</a>
+      <a href="https://github.com/genomewalker/ghostly/issues">issues</a>
+    </div>
+    <div class="footer-credits">
+      ghostly &mdash; persistent ssh sessions from your menu bar
+    </div>
+  </div>
+</footer>
+
+<script>
+const observer = new IntersectionObserver(
+  (entries) => entries.forEach((e) => { if (e.isIntersecting) e.target.classList.add('visible'); }),
+  { threshold: 0.1, rootMargin: '0px 0px -40px 0px' }
+);
+document.querySelectorAll('.fade-in').forEach((el) => observer.observe(el));
+</script>
+
+</body>
+</html>
