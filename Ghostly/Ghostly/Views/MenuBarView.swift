@@ -1,5 +1,6 @@
 import SwiftUI
 
+@MainActor
 struct MenuBarView: View {
     @Environment(ConnectionManager.self) private var manager
     @AppStorage("terminalOpenMode") private var terminalOpenMode = "window"
@@ -8,6 +9,7 @@ struct MenuBarView: View {
     @State private var showNewSessionFor: String?
     @State private var showConsole = false
     @State private var expandedHosts: Set<String> = []
+    @State private var lastRefresh: Date = .distantPast
 
     private var selectedMode: TerminalOpenMode {
         TerminalOpenMode(rawValue: terminalOpenMode) ?? .newWindow
@@ -24,9 +26,18 @@ struct MenuBarView: View {
     // MARK: - Filtered hosts
 
     private var filteredManagedHosts: [SSHHost] {
-        if searchText.count < 3 { return manager.managedHosts }
+        // Exclude favorites from managed section to avoid duplicates
+        let favoriteIDs = Set(manager.favoriteHosts.map(\.id))
+        let nonFavManaged = manager.managedHosts.filter { !favoriteIDs.contains($0.id) }
+        if searchText.count < 3 { return nonFavManaged }
         let q = searchText.lowercased()
-        return manager.managedHosts.filter { $0.alias.lowercased().contains(q) || $0.displayName.lowercased().contains(q) }
+        return nonFavManaged.filter { $0.alias.lowercased().contains(q) || $0.displayName.lowercased().contains(q) }
+    }
+
+    private var filteredFavorites: [SSHHost] {
+        if searchText.count < 3 { return manager.favoriteHosts }
+        let q = searchText.lowercased()
+        return manager.favoriteHosts.filter { $0.alias.lowercased().contains(q) || $0.displayName.lowercased().contains(q) }
     }
 
     private var filteredUnmanagedHosts: [SSHHost] {
@@ -55,6 +66,19 @@ struct MenuBarView: View {
                     }
                     .buttonStyle(.borderless)
                     .help("\(mode.label) (\(mode.shortcutHint))")
+                }
+
+                // Tile all sessions in a grid
+                let totalSessions = manager.managedHosts.reduce(0) { $0 + (manager.sessions[$1.id]?.count ?? 0) }
+                if totalSessions >= 2 {
+                    Button {
+                        Task { await manager.connectTiledSessions() }
+                    } label: {
+                        Image(systemName: "square.grid.2x2")
+                            .font(.system(size: 10))
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Tile all sessions (\(totalSessions))")
                 }
 
                 if manager.isLoading {
@@ -101,12 +125,16 @@ struct MenuBarView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    // Favorites section (always visible if any exist)
-                    if !manager.favoriteHosts.isEmpty {
+                    // Favorites section (filtered by search when active)
+                    if !filteredFavorites.isEmpty {
                         sectionHeader("Favorites")
 
-                        ForEach(manager.favoriteHosts) { host in
-                            favoriteHostRow(host)
+                        ForEach(filteredFavorites) { host in
+                            if host.isManaged {
+                                managedHostRow(host)
+                            } else {
+                                favoriteHostRow(host)
+                            }
                             Divider().padding(.horizontal, 12)
                         }
                     }
@@ -142,7 +170,7 @@ struct MenuBarView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 20)
-                    } else if searchText.count >= 3 && filteredManagedHosts.isEmpty && filteredUnmanagedHosts.isEmpty {
+                    } else if searchText.count >= 3 && filteredFavorites.isEmpty && filteredManagedHosts.isEmpty && filteredUnmanagedHosts.isEmpty {
                         Text("No hosts matching \"\(searchText)\"")
                             .font(.system(size: 12))
                             .foregroundColor(.secondary)
@@ -225,6 +253,14 @@ struct MenuBarView: View {
         .frame(width: 320)
         .onAppear {
             AppLog.shared.log("Ghostly started")
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            // Refresh sessions when the menu bar popover opens (debounced to 5s min interval)
+            let now = Date()
+            if now.timeIntervalSince(lastRefresh) > 5 {
+                lastRefresh = now
+                Task { await manager.refreshManagedHosts() }
+            }
         }
     }
 
@@ -431,7 +467,7 @@ struct MenuBarView: View {
     }
 
     // MARK: - Favorite Host Row
-    @ViewBuilder
+    @MainActor @ViewBuilder
     private func favoriteHostRow(_ host: SSHHost) -> some View {
         let status = host.isManaged ? (manager.connectionStates[host.id] ?? .unknown) : nil
 
@@ -470,7 +506,7 @@ struct MenuBarView: View {
     }
 
     // MARK: - New Session Helper
-    private func createNewSession(host: SSHHost) {
+    @MainActor private func createNewSession(host: SSHHost) {
         let name = newSessionName.trimmingCharacters(in: .whitespaces)
         let sessionName = name.isEmpty ? "session-\(Int.random(in: 100...999))" : name
         AppLog.shared.log("Creating new session '\(sessionName)' on \(host.alias)")

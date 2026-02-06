@@ -1,5 +1,6 @@
 import SwiftUI
 
+@MainActor
 struct ConsoleView: View {
     private let log = AppLog.shared
 

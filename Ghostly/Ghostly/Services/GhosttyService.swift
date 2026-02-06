@@ -76,6 +76,16 @@ actor GhosttyService {
     // MARK: - Public API
 
     func connect(host: String, sessionName: String = "default", backend: SessionBackend? = nil, openMode: TerminalOpenMode? = nil) async throws {
+        // Try to focus existing terminal window first (only for default/window mode)
+        let mode = openMode ?? resolvedDefaultMode()
+        if mode == .newWindow {
+            let terminal = await resolveTerminal()
+            if await focusExistingTerminal(host: host, terminal: terminal) {
+                await AppLog.shared.log("Focused existing terminal for \(host)")
+                return
+            }
+        }
+
         let actualBackend: SessionBackend
         if let backend {
             actualBackend = backend
@@ -93,11 +103,20 @@ actor GhosttyService {
             sessionName: sessionName,
             backend: actualBackend
         )
-        let mode = openMode ?? resolvedDefaultMode()
         try await openTerminal(command: sshCommand, mode: mode)
     }
 
     func reattach(host: String, sessionName: String, backend: SessionBackend = .ghostly, openMode: TerminalOpenMode? = nil) async throws {
+        // Try to focus existing terminal window (only for default/window mode — tabs and splits should always open new)
+        let mode = openMode ?? resolvedDefaultMode()
+        if mode == .newWindow {
+            let terminal = await resolveTerminal()
+            if await focusExistingTerminal(host: host, terminal: terminal) {
+                await AppLog.shared.log("Focused existing terminal for \(host)")
+                return
+            }
+        }
+
         // Preflight: verify binary exists for ghostly backend
         if backend == .ghostly {
             try await preflightCheck(host: host)
@@ -108,13 +127,25 @@ actor GhosttyService {
             sessionName: sessionName,
             backend: backend
         )
-        let mode = openMode ?? resolvedDefaultMode()
         try await openTerminal(command: sshCommand, mode: mode)
     }
 
     func plainSSH(host: String, openMode: TerminalOpenMode? = nil) async throws {
         let mode = openMode ?? resolvedDefaultMode()
         try await openTerminal(command: "ssh \(host)", mode: mode)
+    }
+
+    /// Connect multiple hosts in a tiled Ghostty layout.
+    /// Layout: 2→side by side, 3→2+1, 4→2×2, 5→3+2, etc.
+    func connectTiled(hosts: [(host: String, sessionName: String, backend: SessionBackend)]) async throws {
+        var commands: [String] = []
+        for h in hosts {
+            let cmd = await sessionService.connectCommand(
+                host: h.host, sessionName: h.sessionName, backend: h.backend
+            )
+            commands.append(cmd)
+        }
+        try await openTiled(commands: commands)
     }
 
     // MARK: - Preflight & Mode Resolution
@@ -169,57 +200,330 @@ actor GhosttyService {
             return
         }
 
-        switch mode {
-        case .newWindow:
-            // Launch ghostty directly with -e — no System Events needed
+        let isRunning = isAppRunning("com.mitchellh.ghostty")
+
+        // If Ghostty isn't running yet, launch it with the command directly.
+        // This is the only time we use `open -a` — subsequent windows/tabs/splits
+        // all use CGEvent to keep everything in the SAME Ghostty process.
+        if !isRunning {
             try launchGhosttyProcess(ghosttyBin: ghosttyBin, command: command)
+            return
+        }
 
-        case .newTab, .splitPane:
-            // Tabs and splits require System Events keystrokes
-            let isRunning = isAppRunning("com.mitchellh.ghostty")
-            if !isRunning {
-                _ = try await ShellCommand.run("open -a Ghostty", timeout: 10)
-                try await Task.sleep(nanoseconds: 1_500_000_000)
-            }
+        // Ghostty is running — use CGEvent keystroke injection for ALL modes.
+        // This ensures all windows/tabs/splits stay in the same process,
+        // so splits always go to the window the user was focused on.
+        if !AXIsProcessTrusted() {
+            let opts = [kAXTrustedCheckOptionPrompt.takeRetainedValue(): true] as CFDictionary
+            AXIsProcessTrustedWithOptions(opts)
+            await AppLog.shared.log("Accessibility required — opening in new process as fallback", level: .warning)
+            try launchGhosttyProcess(ghosttyBin: ghosttyBin, command: command)
+            return
+        }
 
-            let escaped = command.replacingOccurrences(of: "\"", with: "\\\"")
-            let modeKeystroke = mode == .newTab
-                ? "keystroke \"t\" using command down"
-                : "keystroke \"d\" using command down"
+        guard let ghosttyApp = NSRunningApplication.runningApplications(
+            withBundleIdentifier: "com.mitchellh.ghostty"
+        ).first else {
+            try launchGhosttyProcess(ghosttyBin: ghosttyBin, command: command)
+            return
+        }
 
-            let script = """
-            tell application "Ghostty" to activate
-            delay 0.3
-            tell application "System Events"
-                tell process "Ghostty"
-                    \(modeKeystroke)
-                    delay 0.5
-                    keystroke "\(escaped)"
-                    keystroke return
-                end tell
-            end tell
-            """
-            try await runAppleScript(script)
+        // Key codes: N=0x2D, T=0x11, D=0x02
+        let keyCode: CGKeyCode
+        switch mode {
+        case .newWindow: keyCode = 0x2D  // Cmd+N
+        case .newTab:    keyCode = 0x11  // Cmd+T
+        case .splitPane: keyCode = 0x02  // Cmd+D
+        }
+
+        do {
+            try await injectIntoGhostty(
+                app: ghosttyApp,
+                command: command,
+                keyCode: keyCode,
+                shift: false
+            )
+        } catch {
+            await AppLog.shared.log("Keystroke injection failed: \(error.localizedDescription)", level: .warning)
+            try launchGhosttyProcess(ghosttyBin: ghosttyBin, command: command)
         }
     }
 
-    /// Launch ghostty with -e flag — command is a flat SSH invocation, no nested quoting
+    // MARK: - Tiled Layout
+
+    /// Open N commands in a tiled Ghostty window.
+    /// Layout: 1→window, 2→[A|B], 3→[A|B / C], 4→[A|B / C|D], 5→[A|B|C / D|E], etc.
+    /// Top row gets ceil(N/2) panes, bottom row gets floor(N/2).
+    private func openTiled(commands: [String]) async throws {
+        guard !commands.isEmpty else { return }
+        guard let ghosttyBin = await detectGhostty() else { return }
+
+        if commands.count == 1 {
+            try await openTerminal(command: commands[0], mode: .newWindow)
+            return
+        }
+
+        guard AXIsProcessTrusted() else {
+            let opts = [kAXTrustedCheckOptionPrompt.takeRetainedValue(): true] as CFDictionary
+            AXIsProcessTrustedWithOptions(opts)
+            await AppLog.shared.log("Accessibility required for tiled layout", level: .warning)
+            // Fall back: open each in a separate window
+            for cmd in commands {
+                try launchGhosttyProcess(ghosttyBin: ghosttyBin, command: cmd)
+                try await Task.sleep(nanoseconds: 500_000_000)
+            }
+            return
+        }
+
+        let n = commands.count
+        let topCount = (n + 1) / 2   // ceil(n/2)
+
+        let isRunning = isAppRunning("com.mitchellh.ghostty")
+
+        // Always open a NEW window for tiling — don't disturb existing windows.
+        if isRunning {
+            // Ghostty running — activate it, Cmd+N for new window, paste first command
+            guard let ghosttyApp = NSRunningApplication.runningApplications(
+                withBundleIdentifier: "com.mitchellh.ghostty"
+            ).first else { return }
+
+            await MainActor.run {
+                NSApp.deactivate()
+                ghosttyApp.activate()
+            }
+            try await Task.sleep(nanoseconds: 500_000_000)
+
+            // Cmd+N for new window — wait longer for it to fully appear
+            postKey(0x2D, flags: .maskCommand)
+            try await Task.sleep(nanoseconds: 1_500_000_000)
+
+            // Paste first command into the new window
+            await clipboardPaste(command: commands[0])
+        } else {
+            // Ghostty not running — launch with first command
+            try launchGhosttyProcess(ghosttyBin: ghosttyBin, command: commands[0])
+            try await Task.sleep(nanoseconds: 2_000_000_000)
+
+            guard let ghosttyApp = NSRunningApplication.runningApplications(
+                withBundleIdentifier: "com.mitchellh.ghostty"
+            ).first else { return }
+
+            await MainActor.run { ghosttyApp.activate() }
+            try await Task.sleep(nanoseconds: 500_000_000)
+        }
+
+        // Now split and fill remaining panes
+        if n == 2 {
+            // Simple: Cmd+D (split right), paste commands[1]
+            await clipboardPasteWithKeystroke(keyCode: 0x02, flags: .maskCommand, command: commands[1])
+            return
+        }
+
+        // 3+ panes: create top/bottom split first
+        // Cmd+Shift+D (split down) → focus moves to bottom pane
+        await clipboardPasteWithKeystroke(
+            keyCode: 0x02, // D
+            flags: [.maskCommand, .maskShift],
+            command: commands[topCount]
+        )
+
+        // Fill remaining bottom panes (left to right)
+        for i in (topCount + 1)..<n {
+            await clipboardPasteWithKeystroke(keyCode: 0x02, flags: .maskCommand, command: commands[i])
+        }
+
+        // Navigate to top-left pane: Alt+K (top)
+        postKey(0x28, flags: .maskAlternate) // K
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        // Fill remaining top panes (commands[0] already there)
+        for i in 1..<topCount {
+            await clipboardPasteWithKeystroke(keyCode: 0x02, flags: .maskCommand, command: commands[i])
+        }
+
+        await AppLog.shared.log("Tiled \(n) panes: \(topCount) top + \(n - topCount) bottom")
+    }
+
+    /// Paste a command into the current pane via clipboard (Cmd+V + Return).
+    private func clipboardPaste(command: String) async {
+        let saved = await MainActor.run { () -> String in
+            let pb = NSPasteboard.general
+            let s = pb.string(forType: .string) ?? ""
+            pb.clearContents()
+            pb.setString(command, forType: .string)
+            return s
+        }
+        postKey(0x09, flags: .maskCommand) // Cmd+V
+        do { try await Task.sleep(nanoseconds: 150_000_000) } catch { return }
+        postKey(0x24, flags: []) // Return
+        do { try await Task.sleep(nanoseconds: 300_000_000) } catch { return }
+        await MainActor.run {
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setString(saved, forType: .string)
+        }
+    }
+
+    /// Send a keystroke to create a split/tab, then paste a command via clipboard.
+    private func clipboardPasteWithKeystroke(keyCode: CGKeyCode, flags: CGEventFlags, command: String) async {
+        // Save clipboard
+        let saved = await MainActor.run { () -> String in
+            let pb = NSPasteboard.general
+            let s = pb.string(forType: .string) ?? ""
+            pb.clearContents()
+            pb.setString(command, forType: .string)
+            return s
+        }
+
+        // Send split/tab keystroke
+        postKey(keyCode, flags: flags)
+        do { try await Task.sleep(nanoseconds: 800_000_000) } catch { return }
+
+        // Paste + Return
+        postKey(0x09, flags: .maskCommand) // Cmd+V
+        do { try await Task.sleep(nanoseconds: 150_000_000) } catch { return }
+        postKey(0x24, flags: []) // Return
+        do { try await Task.sleep(nanoseconds: 300_000_000) } catch { return }
+
+        // Restore clipboard
+        await MainActor.run {
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setString(saved, forType: .string)
+        }
+    }
+
+    /// Launch Ghostty with the given command.
+    /// Uses `open -a` (not `-na`) to reuse the existing Ghostty process when possible.
+    /// Only used when Ghostty is NOT yet running — all subsequent windows use CGEvent.
     private func launchGhosttyProcess(ghosttyBin: String, command: String) throws {
-        // Single bash -c layer for error visibility (keeps window open on failure)
-        let wrappedCommand = "\(command); ret=$?; if [ $ret -ne 0 ]; then echo ''; echo \"[Exit code: $ret] Press Enter to close.\"; read; fi"
+        let wrappedCommand = "\(command); ret=$?; if [ $ret -ne 0 ]; then echo ''; echo \\\"[Exit code: $ret] Press Enter to close.\\\"; read; fi"
 
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: ghosttyBin)
-        process.arguments = ["-e", "/bin/bash", "-c", wrappedCommand]
-        // Don't suppress output — let ghostty manage its own terminal
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = ["-a", "Ghostty", "--args", "-e", "/bin/bash", "-c", wrappedCommand]
         try process.run()
-        // Don't wait — ghostty runs independently
+    }
+
+    // MARK: - CGEvent Keystroke Injection (Ghostty tab/split)
+
+    /// Find the topmost Ghostty window using CGWindowList (Z-order).
+    /// Returns the PID of the Ghostty process that owns it.
+    /// This is the window the user was looking at before clicking the menu bar.
+    private func findTopmostGhosttyPID() -> pid_t? {
+        guard let windowList = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
+        ) as? [[String: Any]] else { return nil }
+
+        for window in windowList {
+            guard let ownerName = window[kCGWindowOwnerName as String] as? String,
+                  ownerName == "Ghostty",
+                  let pid = window[kCGWindowOwnerPID as String] as? pid_t,
+                  let layer = window[kCGWindowLayer as String] as? Int,
+                  layer == 0  // Normal window layer (not menubar, dock, etc.)
+            else { continue }
+            return pid  // First match = topmost in Z-order
+        }
+        return nil
+    }
+
+    /// Raise a specific Ghostty window using the Accessibility API.
+    /// Finds the frontmost window of the process and performs AXRaise.
+    private func raiseGhosttyWindow(pid: pid_t) {
+        let axApp = AXUIElementCreateApplication(pid)
+        var windowsRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+              let windows = windowsRef as? [AXUIElement],
+              let firstWindow = windows.first
+        else { return }
+        AXUIElementPerformAction(firstWindow, kAXRaiseAction as CFString)
+        AXUIElementSetAttributeValue(axApp, kAXFrontmostAttribute as CFString, true as CFTypeRef)
+    }
+
+    /// Inject a command into the focused Ghostty window via CGEvent keystrokes.
+    /// Uses direct HID event posting — no AppleScript, no Automation permission,
+    /// just Accessibility. Much more reliable from a menu bar app.
+    private func injectIntoGhostty(app: NSRunningApplication, command: String, keyCode: CGKeyCode, shift: Bool) async throws {
+        // 1. Find which Ghostty window was topmost BEFORE we steal focus,
+        //    then activate that specific process and raise its window.
+        let targetPID = findTopmostGhosttyPID()
+        let targetApp: NSRunningApplication
+        if let pid = targetPID,
+           let found = NSRunningApplication.runningApplications(
+               withBundleIdentifier: "com.mitchellh.ghostty"
+           ).first(where: { $0.processIdentifier == pid }) {
+            targetApp = found
+        } else {
+            targetApp = app
+        }
+
+        await MainActor.run {
+            NSApp.deactivate()
+            targetApp.activate()
+        }
+        // Raise the specific window via Accessibility API
+        if let pid = targetPID {
+            raiseGhosttyWindow(pid: pid)
+        }
+        try await Task.sleep(nanoseconds: 500_000_000) // 0.5s for activation
+
+        // 2. Save clipboard, set command
+        let savedClip = await MainActor.run { () -> String in
+            let pb = NSPasteboard.general
+            let saved = pb.string(forType: .string) ?? ""
+            pb.clearContents()
+            pb.setString(command, forType: .string)
+            return saved
+        }
+
+        // 3. Send Cmd+<key> (Cmd+D for split, Cmd+T for tab)
+        var flags: CGEventFlags = .maskCommand
+        if shift { flags.insert(.maskShift) }
+        postKey(keyCode, flags: flags)
+        try await Task.sleep(nanoseconds: 800_000_000) // 0.8s for split/tab to appear
+
+        // 4. Paste (Cmd+V) + Return
+        postKey(0x09, flags: .maskCommand) // V
+        try await Task.sleep(nanoseconds: 150_000_000)
+        postKey(0x24, flags: []) // Return
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        // 5. Restore clipboard
+        try await Task.sleep(nanoseconds: 400_000_000)
+        await MainActor.run {
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setString(savedClip, forType: .string)
+        }
+    }
+
+    /// Post a single key event (down + up) to the HID event tap.
+    /// Key codes: D=0x02, T=0x11, V=0x09, Return=0x24
+    private func postKey(_ keyCode: CGKeyCode, flags: CGEventFlags) {
+        let source = CGEventSource(stateID: .combinedSessionState)
+        if let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true) {
+            down.flags = flags
+            down.post(tap: .cghidEventTap)
+        }
+        if let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) {
+            up.flags = flags
+            up.post(tap: .cghidEventTap)
+        }
     }
 
     // MARK: - iTerm2
 
     private func openInITerm(command: String, mode: TerminalOpenMode) async throws {
-        let escaped = command.replacingOccurrences(of: "\"", with: "\\\"")
+        // Fall back to Terminal.app if iTerm2 is not installed
+        guard detectITerm() else {
+            await AppLog.shared.log("iTerm2 not found, falling back to Terminal.app", level: .warning)
+            try await openInTerminalApp(command: command, mode: mode)
+            return
+        }
+
+        let escaped = command
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
 
         switch mode {
         case .newWindow:
@@ -266,7 +570,9 @@ actor GhosttyService {
     // MARK: - Terminal.app
 
     private func openInTerminalApp(command: String, mode: TerminalOpenMode) async throws {
-        let escaped = command.replacingOccurrences(of: "\"", with: "\\\"")
+        let escaped = command
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
 
         switch mode {
         case .newWindow:
@@ -318,6 +624,97 @@ actor GhosttyService {
                 }
             }
         }
+    }
+
+    private func runAppleScriptReturningBool(_ source: String) async -> Bool {
+        let src = source
+        return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            DispatchQueue.main.async {
+                var errorInfo: NSDictionary?
+                let script = NSAppleScript(source: src)
+                let result = script?.executeAndReturnError(&errorInfo)
+                if errorInfo != nil || result == nil {
+                    continuation.resume(returning: false)
+                } else {
+                    continuation.resume(returning: result!.booleanValue)
+                }
+            }
+        }
+    }
+
+    // MARK: - Focus Existing Terminal Window
+
+    private func focusExistingTerminal(host: String, terminal: PreferredTerminal) async -> Bool {
+        let escaped = host.replacingOccurrences(of: "\"", with: "\\\"")
+        switch terminal {
+        case .ghostty, .auto:
+            return await focusGhosttyWindow(host: escaped)
+        case .iterm2:
+            return await focusITermWindow(host: escaped)
+        case .terminal:
+            return await focusTerminalAppWindow(host: escaped)
+        }
+    }
+
+    private func focusGhosttyWindow(host: String) async -> Bool {
+        guard isAppRunning("com.mitchellh.ghostty") else { return false }
+        let script = """
+        tell application "System Events"
+            tell process "Ghostty"
+                repeat with w in every window
+                    if name of w contains "\(host)" then
+                        perform action "AXRaise" of w
+                        set frontmost to true
+                        return true
+                    end if
+                end repeat
+            end tell
+        end tell
+        return false
+        """
+        return await runAppleScriptReturningBool(script)
+    }
+
+    private func focusITermWindow(host: String) async -> Bool {
+        guard isAppRunning("com.googlecode.iterm2") else { return false }
+        let script = """
+        tell application "iTerm2"
+            repeat with w in windows
+                repeat with t in tabs of w
+                    repeat with s in sessions of t
+                        if name of s contains "\(host)" then
+                            select t
+                            tell w to select
+                            activate
+                            return true
+                        end if
+                    end repeat
+                end repeat
+            end repeat
+        end tell
+        return false
+        """
+        return await runAppleScriptReturningBool(script)
+    }
+
+    private func focusTerminalAppWindow(host: String) async -> Bool {
+        guard isAppRunning("com.apple.Terminal") else { return false }
+        let script = """
+        tell application "Terminal"
+            repeat with w in windows
+                repeat with t in tabs of w
+                    if name of t contains "\(host)" then
+                        set selected tab of w to t
+                        set index of w to 1
+                        activate
+                        return true
+                    end if
+                end repeat
+            end repeat
+        end tell
+        return false
+        """
+        return await runAppleScriptReturningBool(script)
     }
 
     private func isAppRunning(_ bundleID: String) -> Bool {

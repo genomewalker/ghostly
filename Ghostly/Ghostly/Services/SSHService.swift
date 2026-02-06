@@ -11,10 +11,14 @@ actor SSHService {
         try await ShellCommand.ssh(host: host, command: command, timeout: timeout)
     }
 
-    /// Batch test multiple hosts concurrently
+    /// Batch test multiple hosts concurrently (limited to 3 at a time)
     func testHosts(_ hosts: [String], timeout: TimeInterval = 10) async -> [String: Bool] {
-        await withTaskGroup(of: (String, Bool).self) { group in
-            for host in hosts {
+        let maxConcurrent = 3
+        return await withTaskGroup(of: (String, Bool).self) { group in
+            for (index, host) in hosts.enumerated() {
+                if index >= maxConcurrent {
+                    _ = await group.next()
+                }
                 group.addTask {
                     let reachable = await ShellCommand.sshReachable(host: host, timeout: timeout)
                     return (host, reachable)

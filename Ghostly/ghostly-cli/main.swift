@@ -20,6 +20,7 @@ func printUsage() {
 
     Usage:
       ghostly connect <host> [-s session]    Connect to host (creates/attaches session)
+      ghostly create <host> [-s name]        Create a new session (auto-names if omitted)
       ghostly attach <host> <session>        Reattach to existing session
       ghostly ssh <host>                     Plain SSH (no session multiplexer)
       ghostly list                           List all SSH hosts from config
@@ -37,6 +38,8 @@ func printUsage() {
     Examples:
       ghostly connect myhost
       ghostly connect myhost -s coding
+      ghostly create myhost
+      ghostly create myhost -s work
       ghostly attach myhost coding
       ghostly attach myhost coding -v
       ghostly sessions myhost
@@ -97,11 +100,41 @@ func shell(_ command: String) -> Int32 {
     return process.terminationStatus
 }
 
+/// Ensure a ghostly-session exists on the remote (create if needed, non-interactive).
+/// Uses 'create' (daemonizes and returns) then attaches interactively in a separate SSH.
+func ensureRemoteSession(host: String, sessionName: String) {
+    vlog("Ensuring session '\(sessionName)' exists on \(host)...")
+    // 'create' daemonizes and returns immediately. Fails if session already exists — that's fine.
+    _ = shellOutput("ssh -o ConnectTimeout=10 -o BatchMode=yes \(host) '~/.local/bin/ghostly-session create \(sessionName)' 2>/dev/null")
+    vlog("Session ensure done")
+}
+
+/// Replace this process with SSH using execvp — guarantees proper TTY inheritance.
+/// Swift's Process (posix_spawn) doesn't pass TTY correctly for interactive programs.
+func execSSH(host: String, remoteCommand: String = "", verbose: Bool = false) -> Never {
+    var sshArgs = ["ssh", "-tt"]
+    if verbose { sshArgs.append("-v") }
+    sshArgs.append(host)
+    if !remoteCommand.isEmpty {
+        sshArgs.append(remoteCommand)
+    }
+    vlog("exec: \(sshArgs.joined(separator: " "))")
+
+    // execvp replaces the current process with ssh — perfect TTY inheritance
+    let cArgs: [UnsafeMutablePointer<CChar>?] = sshArgs.map { strdup($0) } + [nil]
+    execvp("ssh", cArgs)
+
+    // execvp only returns on error
+    perror("execvp failed")
+    exit(127)
+}
+
 func shellOutput(_ command: String) -> String? {
     let process = Process()
     let pipe = Pipe()
     process.executableURL = URL(fileURLWithPath: "/bin/bash")
     process.arguments = ["-c", command]
+    process.standardInput = FileHandle.nullDevice  // Don't consume terminal stdin
     process.standardOutput = pipe
     process.standardError = FileHandle.nullDevice
     try? process.run()
@@ -166,15 +199,50 @@ case "connect":
         vlog("Remote version: \(remote)")
     }
 
+    // Step 1: Ensure session exists (non-interactive SSH, returns immediately)
+    ensureRemoteSession(host: host, sessionName: sessionName)
+
+    // Step 2: Attach interactively (clean SSH with full TTY)
     vlog("Sending IPC notification...")
     IPCClient.notifyConnect(host: host, session: sessionName)
-    vlog("IPC done. Starting SSH...")
-    let sshVerbose = verbose ? "-v" : ""
-    let sshCmd = "ssh -t \(sshVerbose) \(host) '~/.local/bin/ghostly-session open \(sessionName)'"
-    vlog("Command: \(sshCmd)")
-    let status = shell(sshCmd)
-    IPCClient.notifyDisconnect(host: host)
-    exit(status)
+    vlog("Attaching to session...")
+    execSSH(host: host, remoteCommand: "~/.local/bin/ghostly-session attach \(sessionName)", verbose: verbose)
+
+case "create":
+    guard args.count >= 3 else {
+        print("Error: specify a host")
+        exit(1)
+    }
+    let host = args[2]
+    var sessionName: String
+
+    // Parse -s/--session flag, or auto-generate
+    if let idx = args.firstIndex(where: { $0 == "-s" || $0 == "--session" }),
+       idx + 1 < args.count {
+        sessionName = args[idx + 1]
+    } else {
+        sessionName = "session-\(Int.random(in: 100...999))"
+    }
+
+    print("Creating session \(sessionName) on \(host)...")
+
+    // Version check
+    if let remoteVersion = shellOutput("ssh -o ConnectTimeout=5 -o BatchMode=yes \(host) '~/.local/bin/ghostly-session version 2>/dev/null'") {
+        let remote = remoteVersion.replacingOccurrences(of: "ghostly-session ", with: "")
+        if remote != ghostlyVersion {
+            print("Warning: version mismatch — CLI \(ghostlyVersion), remote \(remote)")
+        }
+        vlog("Remote version: \(remote)")
+    }
+
+    // Step 1: Create session (non-interactive SSH, returns immediately)
+    ensureRemoteSession(host: host, sessionName: sessionName)
+
+    // Step 2: Attach interactively (clean SSH with full TTY)
+    vlog("Sending IPC notification...")
+    IPCClient.notifyConnect(host: host, session: sessionName)
+    vlog("Attaching to session...")
+    execSSH(host: host, remoteCommand: "~/.local/bin/ghostly-session attach \(sessionName)", verbose: verbose)
 
 case "attach":
     guard args.count >= 4 else {
@@ -196,13 +264,8 @@ case "attach":
 
     vlog("Sending IPC notification...")
     IPCClient.notifyConnect(host: host, session: session)
-    vlog("IPC done. Starting SSH...")
-    let sshVerbose = verbose ? "-v" : ""
-    let sshCmd = "ssh -t \(sshVerbose) \(host) '~/.local/bin/ghostly-session open \(session)'"
-    vlog("Command: \(sshCmd)")
-    let status = shell(sshCmd)
-    IPCClient.notifyDisconnect(host: host)
-    exit(status)
+    vlog("Attaching to session...")
+    execSSH(host: host, remoteCommand: "~/.local/bin/ghostly-session attach \(session)", verbose: verbose)
 
 case "ssh":
     guard args.count >= 3 else {
@@ -211,10 +274,7 @@ case "ssh":
     }
     let host = args[2]
     IPCClient.notifyConnect(host: host)
-    let sshVerbose = verbose ? "-v" : ""
-    let status = shell("ssh \(sshVerbose) \(host)")
-    IPCClient.notifyDisconnect(host: host)
-    exit(status)
+    execSSH(host: host, remoteCommand: "", verbose: verbose)
 
 case "list":
     let hosts = parseSSHConfig()
@@ -354,13 +414,13 @@ case "completions":
             COMPREPLY=()
             cur="${COMP_WORDS[COMP_CWORD]}"
             prev="${COMP_WORDS[COMP_CWORD-1]}"
-            commands="connect attach ssh list sessions status setup help"
+            commands="connect create attach ssh list sessions status setup help"
 
             case "$prev" in
                 ghostly)
                     COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
                     ;;
-                connect|attach|ssh|sessions|setup)
+                connect|create|attach|ssh|sessions|setup)
                     COMPREPLY=( $(compgen -W "\(hostList)" -- "$cur") )
                     ;;
             esac
@@ -372,7 +432,7 @@ case "completions":
         #compdef ghostly
         _ghostly() {
             local -a commands hosts
-            commands=(connect attach ssh list sessions status setup help)
+            commands=(connect create attach ssh list sessions status setup help)
             hosts=(\(hostList))
 
             _arguments '1:command:($commands)' '2:host:($hosts)'

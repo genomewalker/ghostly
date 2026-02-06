@@ -24,7 +24,7 @@ final class SettingsWindowController {
         window.setContentSize(NSSize(width: 450, height: 420))
         window.center()
         window.isReleasedWhenClosed = false
-        window.level = .floating
+        window.level = .normal
         self.window = window
 
         window.makeKeyAndOrderFront(nil)

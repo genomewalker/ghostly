@@ -326,6 +326,7 @@ struct ScrollbackBuffer {
     void reset() { head = 0; count = 0; in_alt_screen = false; }
 
     void append(const uint8_t *buf, int len) {
+        if (in_alt_screen) return;  // Don't buffer TUI content
         for (int i = 0; i < len; i++) {
             data[head] = buf[i];
             head = (head + 1) % SCROLLBACK_SIZE;
@@ -335,7 +336,7 @@ struct ScrollbackBuffer {
 
     // Scan PTY output for alternate screen enter/exit sequences.
     // Detects: CSI ?1049h/l, CSI ?47h/l, CSI ?1047h/l
-    // Called after append() with the same buffer.
+    // Must be called BEFORE append() so the flag is current.
     void scan_alt_screen(const uint8_t *buf, int len) {
         for (int i = 0; i < len; i++) {
             if (buf[i] != 0x1b) continue;     // ESC
@@ -358,18 +359,23 @@ struct ScrollbackBuffer {
 
     // Replay stored data to a single client fd via MSG_DATA.
     // If skip_replay is true, send nothing (fast attach).
-    // If in alt-screen mode, only replay last ALT_SCREEN_REPLAY bytes
-    // (one screenful) to avoid replaying thousands of TUI redraws.
+    // If in alt-screen mode, send a clean "enter alt screen + clear" instead
+    // of replaying partial TUI frames. The SIGWINCH from attach will trigger
+    // the TUI app to redraw at the correct size. This ensures clean terminal
+    // state when the TUI app later exits (ESC[?1049l works correctly).
     bool replay_to(int fd, bool skip_replay = false) const {
         if (count == 0 || skip_replay) return true;
 
-        int replay_count = count;
-        if (in_alt_screen && replay_count > ALT_SCREEN_REPLAY) {
-            replay_count = ALT_SCREEN_REPLAY;
+        if (in_alt_screen) {
+            // Enter alt screen, reset attributes, clear, show cursor.
+            // SIGWINCH will trigger the TUI app to redraw at correct size.
+            // When the TUI exits (ESC[?1049l), the clean main screen is restored.
+            const char *reset = "\033[?1049h\033[0m\033[H\033[2J\033[?25h";
+            return send_msg(fd, MSG_DATA, (const uint8_t *)reset, strlen(reset));
         }
 
-        int start = (head - replay_count + SCROLLBACK_SIZE) % SCROLLBACK_SIZE;
-        int remaining = replay_count;
+        int start = (head - count + SCROLLBACK_SIZE) % SCROLLBACK_SIZE;
+        int remaining = count;
         while (remaining > 0) {
             int chunk = remaining;
             // Don't wrap around the buffer boundary
@@ -619,9 +625,17 @@ static int run_server(const std::string &name, const std::string &cmd) {
                         // Set operational recv timeout [FIX #5]
                         set_recv_timeout(cfd, CLIENT_RECV_TIMEOUT);
 
+                        // Add client to broadcast list BEFORE signaling child,
+                        // so the SIGWINCH-triggered redraw reaches this client.
                         srv.client_fds[srv.num_clients++] = cfd;
                         write_info_file(info_path(name), getpid(), srv.num_clients,
                                         srv.created, srv.command);
+
+                        // Now signal child to redraw at new window size.
+                        // The redraw output will broadcast to all clients
+                        // including the one we just added.
+                        if (srv.child_pid > 0)
+                            kill(srv.child_pid, SIGWINCH);
                     } else {
                         // Failed handshake — reject client
                         close(cfd);
@@ -635,8 +649,8 @@ static int run_server(const std::string &name, const std::string &cmd) {
             uint8_t buf[BUF_SIZE];
             ssize_t n = read(pty_master, buf, sizeof(buf));
             if (n > 0) {
-                srv.scrollback->append(buf, (int)n);
                 srv.scrollback->scan_alt_screen(buf, (int)n);
+                srv.scrollback->append(buf, (int)n);  // skips if in_alt_screen
                 server_broadcast(srv, MSG_DATA, buf, (uint32_t)n);
             } else if (n == 0 || (n < 0 && errno != EAGAIN && errno != EINTR)) {
                 srv.running = false;

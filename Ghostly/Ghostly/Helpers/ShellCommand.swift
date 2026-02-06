@@ -25,48 +25,55 @@ struct ShellResult {
 }
 
 actor ShellCommand {
+    private static let shellQueue = DispatchQueue(label: "com.ghostly.shell", attributes: .concurrent)
+
     static func run(
         _ command: String,
         arguments: [String] = [],
         timeout: TimeInterval = 30
     ) async throws -> ShellResult {
+        // Run blocking Process work on a dedicated queue (not Swift cooperative thread pool)
+        // to avoid thread starvation that can freeze the app/system.
         try await withCheckedThrowingContinuation { continuation in
-            let process = Process()
-            let stdoutPipe = Pipe()
-            let stderrPipe = Pipe()
+            shellQueue.async {
+                let process = Process()
+                let stdoutPipe = Pipe()
+                let stderrPipe = Pipe()
 
-            process.executableURL = URL(fileURLWithPath: "/bin/bash")
-            process.arguments = ["-c", command]
-            process.standardOutput = stdoutPipe
-            process.standardError = stderrPipe
+                process.executableURL = URL(fileURLWithPath: "/bin/bash")
+                process.arguments = ["-c", command]
+                process.standardInput = FileHandle.nullDevice
+                process.standardOutput = stdoutPipe
+                process.standardError = stderrPipe
 
-            let timer = DispatchSource.makeTimerSource(queue: .global())
-            timer.schedule(deadline: .now() + timeout)
-            timer.setEventHandler {
-                process.terminate()
-            }
-            timer.resume()
+                let timer = DispatchSource.makeTimerSource(queue: .global())
+                timer.schedule(deadline: .now() + timeout)
+                timer.setEventHandler {
+                    process.terminate()
+                }
+                timer.resume()
 
-            do {
-                try process.run()
-                process.waitUntilExit()
-                timer.cancel()
+                do {
+                    try process.run()
+                    process.waitUntilExit()
+                    timer.cancel()
 
-                let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                    let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+                    let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
 
-                let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
-                let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+                    let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
+                    let stderr = String(data: stderrData, encoding: .utf8) ?? ""
 
-                let result = ShellResult(
-                    output: stdout.trimmingCharacters(in: .whitespacesAndNewlines),
-                    errorOutput: stderr.trimmingCharacters(in: .whitespacesAndNewlines),
-                    exitCode: process.terminationStatus
-                )
-                continuation.resume(returning: result)
-            } catch {
-                timer.cancel()
-                continuation.resume(throwing: ShellError.processError(error.localizedDescription))
+                    let result = ShellResult(
+                        output: stdout.trimmingCharacters(in: .whitespacesAndNewlines),
+                        errorOutput: stderr.trimmingCharacters(in: .whitespacesAndNewlines),
+                        exitCode: process.terminationStatus
+                    )
+                    continuation.resume(returning: result)
+                } catch {
+                    timer.cancel()
+                    continuation.resume(throwing: ShellError.processError(error.localizedDescription))
+                }
             }
         }
     }
@@ -78,7 +85,7 @@ actor ShellCommand {
         timeout: TimeInterval = 15
     ) async throws -> ShellResult {
         let escaped = remoteCommand.replacingOccurrences(of: "'", with: "'\\''")
-        let fullCommand = "ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=accept-new \(host) '\(escaped)'"
+        let fullCommand = "ssh -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=accept-new \(host) '\(escaped)'"
         return try await run(fullCommand, timeout: timeout)
     }
 

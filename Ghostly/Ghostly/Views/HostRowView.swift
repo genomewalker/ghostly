@@ -24,8 +24,12 @@ struct HostRowView: View {
                 statusIndicator
 
                 Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        isExpanded.toggle()
+                    if status == .connected {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            isExpanded.toggle()
+                        }
+                    } else if status == .disconnected || status == .error || status == .unknown {
+                        onConnect()
                     }
                 } label: {
                     HStack(spacing: 4) {
@@ -287,9 +291,12 @@ struct HostRowView: View {
     }
 
     private func diskColor(_ usage: String) -> Color {
-        // Parse percentage from strings like "67%" or "67"
-        let digits = usage.filter(\.isNumber)
-        guard let pct = Int(digits) else { return .secondary }
+        // Parse percentage from strings like "67%", "50% /home", or "1.2T/2T (60%)"
+        // Extract the number immediately before a % sign
+        guard let range = usage.range(of: #"\d+%"#, options: .regularExpression),
+              let pct = Int(usage[range].dropLast()) else {
+            return .secondary
+        }
         if pct >= 90 { return .red }
         if pct >= 80 { return .orange }
         return .secondary

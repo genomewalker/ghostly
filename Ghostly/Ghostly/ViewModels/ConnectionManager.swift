@@ -93,7 +93,7 @@ final class ConnectionManager {
 
         // Watch for config changes
         await configParser.watchForChanges { [weak self] in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 await self?.loadHosts()
             }
         }
@@ -130,8 +130,13 @@ final class ConnectionManager {
         let managed = managedHosts
         guard !managed.isEmpty else { return }
 
+        // Limit concurrent SSH checks to avoid flooding the system
+        let maxConcurrent = 3
         await withTaskGroup(of: Void.self) { group in
-            for host in managed {
+            for (index, host) in managed.enumerated() {
+                if index >= maxConcurrent {
+                    await group.next() // Wait for one to finish before starting next
+                }
                 group.addTask { @MainActor in
                     await self.checkHost(host)
                 }
@@ -188,6 +193,45 @@ final class ConnectionManager {
         } catch {
             lastError[host.id] = error.localizedDescription
             AppLog.shared.log("Connect to \(host.alias) failed: \(error.localizedDescription)", level: .error)
+        }
+    }
+
+    /// Connect multiple hosts in a tiled Ghostly layout.
+    func connectTiled(hosts: [SSHHost]) async {
+        var entries: [(host: String, sessionName: String, backend: SessionBackend)] = []
+        for host in hosts {
+            let backend = await sessionService.ensureGhostlySession(on: host.sshTarget)
+            entries.append((host: host.sshTarget, sessionName: "default", backend: backend))
+        }
+        AppLog.shared.log("Tiling \(entries.count) hosts")
+        do {
+            try await ghosttyService.connectTiled(hosts: entries)
+        } catch {
+            AppLog.shared.log("Tile failed: \(error.localizedDescription)", level: .error)
+        }
+    }
+
+    /// Tile all sessions across all managed hosts.
+    func connectTiledSessions() async {
+        var entries: [(host: String, sessionName: String, backend: SessionBackend)] = []
+        for host in managedHosts {
+            let hostSessions = sessions[host.id] ?? []
+            if hostSessions.isEmpty {
+                // No sessions yet — connect with default
+                let backend = await sessionService.ensureGhostlySession(on: host.sshTarget)
+                entries.append((host: host.sshTarget, sessionName: "default", backend: backend))
+            } else {
+                for session in hostSessions {
+                    entries.append((host: host.sshTarget, sessionName: session.name, backend: session.backend))
+                }
+            }
+        }
+        guard entries.count >= 2 else { return }
+        AppLog.shared.log("Tiling \(entries.count) sessions")
+        do {
+            try await ghosttyService.connectTiled(hosts: entries)
+        } catch {
+            AppLog.shared.log("Tile failed: \(error.localizedDescription)", level: .error)
         }
     }
 
