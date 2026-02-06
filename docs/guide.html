@@ -173,12 +173,25 @@
 
     <h3>Supported Terminals</h3>
     <ul>
-      <li><strong>Ghostty</strong> &mdash; full support for window, tab, and split modes via System Events keystrokes</li>
+      <li><strong>Ghostty</strong> &mdash; full support for window, tab, split, and tiled layout via CGEvent keystroke injection (requires Accessibility permission)</li>
       <li><strong>iTerm2</strong> &mdash; full support via native AppleScript dictionary</li>
       <li><strong>Terminal.app</strong> &mdash; supports window and tab modes (split falls back to new tab)</li>
     </ul>
 
     <p>Set your preferred terminal in <strong>Settings &gt; Terminal</strong>, or leave it on <strong>Auto</strong> to let Ghostly detect the best option.</p>
+
+    <h3>Tiled Layouts</h3>
+    <p>When you have 2 or more sessions, a grid icon appears in the menu bar header. Clicking it opens a new Ghostty window and arranges all sessions in a tiled grid:</p>
+    <ul>
+      <li>2 sessions &rarr; side by side</li>
+      <li>3 sessions &rarr; 2 top + 1 bottom</li>
+      <li>4 sessions &rarr; 2&times;2 grid</li>
+      <li>5 sessions &rarr; 3 top + 2 bottom</li>
+    </ul>
+    <p>Tiling requires Ghostty with Accessibility permission enabled for Ghostly in System Settings &gt; Privacy &amp; Security &gt; Accessibility.</p>
+
+    <h3>Smart Window Focus</h3>
+    <p>When you click a host to connect or reattach (in window mode), Ghostly first checks if a terminal window for that host is already open. If it finds one, it focuses that window instead of opening a new one. This prevents accumulating duplicate terminal windows.</p>
   </section>
 
   <!-- SSH Config -->

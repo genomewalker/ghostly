@@ -280,7 +280,7 @@
           </tr>
           <tr>
             <td>Scrollback buffer</td>
-            <td class="no">Terminal handles it</td>
+            <td class="yes">128KB replay on reattach</td>
             <td class="yes">Built-in</td>
             <td class="yes">Built-in</td>
           </tr>
@@ -301,6 +301,28 @@
     </div>
 
     <p style="margin-top: 24px;">ghostly-session is designed for a different use case than tmux/screen. It doesn't try to be a terminal multiplexer &mdash; it's a session persistence daemon with a clean API. Your terminal emulator (Ghostty, iTerm2) handles tabs, panes, and scrollback. ghostly-session just keeps your shell alive.</p>
+  </section>
+
+  <!-- Terminal Control -->
+  <section class="doc-section">
+    <h2>Terminal Control (macOS App)</h2>
+    <p>Ghostly.app controls terminal emulators differently depending on the terminal:</p>
+
+    <table class="ref-table">
+      <thead>
+        <tr><th>Terminal</th><th>Method</th><th>Permission</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Ghostty</td><td>CGEvent keystroke injection</td><td>Accessibility</td></tr>
+        <tr><td>iTerm2</td><td>AppleScript dictionary</td><td>Automation</td></tr>
+        <tr><td>Terminal.app</td><td>AppleScript</td><td>Automation</td></tr>
+      </tbody>
+    </table>
+
+    <p>For Ghostty, the app uses <code>CGEvent.post(tap: .cghidEventTap)</code> to send keystrokes directly (Cmd+N, Cmd+T, Cmd+D, Cmd+Shift+D). This only requires Accessibility permission &mdash; no Automation permission needed. Window targeting uses <code>CGWindowListCopyWindowInfo</code> to find the topmost Ghostty window in Z-order, then <code>AXUIElement</code> to raise it.</p>
+
+    <h3>Alt-screen Handling</h3>
+    <p>The scrollback buffer (128KB ring buffer) is alt-screen aware. When a TUI application (htop, vim, etc.) activates the alternate screen buffer, the daemon stops buffering output to prevent TUI garbage in the scrollback. On reattach, if the session is in alt-screen mode, the daemon sends a clean reset sequence instead of replaying stale TUI data.</p>
   </section>
 
 </div>

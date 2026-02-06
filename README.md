@@ -44,9 +44,11 @@ Ghostly.app (macOS) ──ssh──▶ ghostly-session (daemon) ──pty──�
 - **Menu bar app** — always accessible, shows host status at a glance
 - **Auto-install** — ghostly-session compiles from source on any remote host via SSH
 - **Multi-terminal** — Ghostty, iTerm2, Terminal.app with window/tab/split modes
+- **Tiled layouts** — tile all sessions in a grid (2=side-by-side, 3=2+1, 4=2x2, etc.)
+- **Smart window focus** — reattach focuses existing terminal instead of opening a new one
 - **Session persistence** — sessions survive disconnects, network changes, lid close
 - **Smart fallback** — prefers ghostly-session, falls back to tmux/screen
-- **Scrollback replay** — 128KB buffer, reattach shows recent output
+- **Scrollback replay** — 128KB buffer, reattach shows recent output (alt-screen aware)
 - **CLI tool** — `ghostly connect`, `ghostly sessions`, shell completions
 - **System info** — CPU load, disk usage, conda env, SLURM jobs
 - **Favorites** — pin frequently used hosts to the top
